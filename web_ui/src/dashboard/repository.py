@@ -11,10 +11,10 @@ import json
 import asyncio
 
 from ..database.connection import StateRepository, ActivitiesRepository
-from ..models.status import SystemStatus, SystemStatusResponse, TodaySummaryResponse, HealthCheckResponse
+from ..models.status import SystemStatus, SystemStatusResponse, TodaySummaryResponse
 from ..models.activity import AttendanceActivity, ActivityListItem
 from ..app_utils import format_uptime, format_file_size
-from .schemas import QuickStats, Alert, ServiceStatus, SystemHealth, ComponentHealth, DashboardOverview
+from .schemas import QuickStats, Alert, DashboardOverview
 
 logger = logging.getLogger('webui.dashboard.repository')
 
@@ -279,61 +279,7 @@ class DashboardRepository:
         
         return alerts
     
-    async def get_health_check(self) -> HealthCheckResponse:
-        """Perform comprehensive health check"""
-        try:
-            checks = {}
-            overall_status = "healthy"
-            
-            # Check project accessibility
-            checks["greythr_project_accessible"] = self.project_path.exists()
-            
-            # Check state file
-            state_file = self.project_path / "state" / "current_state.json"
-            checks["state_file_exists"] = state_file.exists()
-            
-            # Check activities directory
-            activities_dir = self.project_path / "activities"
-            checks["activities_dir_exists"] = activities_dir.exists()
-            
-            # Check logs directory
-            logs_dir = self.project_path / "logs"
-            checks["logs_dir_exists"] = logs_dir.exists()
-            
-            # Check if state data is readable
-            state_data = await self.state_repo.get_current_state()
-            checks["state_data_readable"] = state_data is not None
-            
-            # Check service script
-            service_script = self.project_path / "greythr_service.sh"
-            checks["service_script_exists"] = service_script.exists()
-            
-            # Determine overall status
-            if not all(checks.values()):
-                overall_status = "degraded"
-            
-            # Check for critical issues
-            critical_checks = ["greythr_project_accessible", "state_file_exists"]
-            if not all(checks.get(check, False) for check in critical_checks):
-                overall_status = "unhealthy"
-            
-            return HealthCheckResponse(
-                status=overall_status,
-                checks=checks,
-                timestamp=datetime.now().isoformat(),
-                greythr_project_path=str(self.project_path),
-                message=f"Health check completed: {overall_status}"
-            )
-            
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return HealthCheckResponse(
-                status="unhealthy",
-                checks={"health_check_error": False},
-                timestamp=datetime.now().isoformat(),
-                greythr_project_path=str(self.project_path),
-                message=f"Health check error: {str(e)}"
-            )
+
     
     # Helper methods
     

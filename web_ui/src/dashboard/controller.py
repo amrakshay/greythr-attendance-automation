@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .repository import DashboardRepository
-from .schemas import DashboardOverview, QuickStats, Alert, SystemHealth, ComponentHealth
-from ..models.status import SystemStatusResponse, TodaySummaryResponse, HealthCheckResponse
+from .schemas import DashboardOverview, QuickStats, Alert
+from ..models.status import SystemStatusResponse, TodaySummaryResponse
 from ..models.activity import ActivityListItem
 
 logger = logging.getLogger('webui.dashboard.controller')
@@ -179,62 +179,7 @@ class DashboardController:
                 timestamp=datetime.now().isoformat()
             )]
     
-    async def get_system_health(self) -> SystemHealth:
-        """Get comprehensive system health check"""
-        try:
-            health_check = await self.repository.get_health_check()
-            
-            # Convert to SystemHealth format with additional analysis
-            components = {}
-            issues = []
-            recommendations = []
-            
-            for check_name, status in health_check.checks.items():
-                component_status = "healthy" if status else "unhealthy"
-                components[check_name] = ComponentHealth(
-                    status=component_status,
-                    message=self._get_component_message(check_name, status),
-                    last_check=health_check.timestamp
-                )
-                
-                if not status:
-                    issues.append(self._get_issue_description(check_name))
-                    recommendations.append(self._get_recommendation(check_name))
-            
-            return SystemHealth(
-                overall_status=health_check.status,
-                components=components,
-                last_check=health_check.timestamp,
-                issues=issues,
-                recommendations=recommendations
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in get_system_health controller: {e}")
-            return SystemHealth(
-                overall_status="error",
-                components={"error": ComponentHealth(
-                    status="error",
-                    message=f"Health check failed: {str(e)}",
-                    last_check=datetime.now().isoformat()
-                )},
-                last_check=datetime.now().isoformat(),
-                issues=[f"Health check failed: {str(e)}"],
-                recommendations=["Check system logs for more details"]
-            )
-    
-    async def refresh_dashboard_data(self, force: bool = False) -> bool:
-        """Refresh dashboard data (for future caching implementation)"""
-        try:
-            logger.info(f"Refreshing dashboard data (force={force})")
-            
-            # For now, just validate that we can fetch the data
-            overview = await self.get_dashboard_overview()
-            return overview is not None
-            
-        except Exception as e:
-            logger.error(f"Error refreshing dashboard data: {e}")
-            return False
+
     
     # Private helper methods for business logic
     
@@ -310,64 +255,4 @@ class DashboardController:
         # Limit to maximum 5 alerts to avoid UI clutter
         return alerts[:5]
     
-    def _get_component_message(self, component: str, healthy: bool) -> str:
-        """Get descriptive message for component health"""
-        messages = {
-            "greythr_project_accessible": {
-                True: "GreytHR project directory is accessible",
-                False: "Cannot access GreytHR project directory"
-            },
-            "state_file_exists": {
-                True: "State file is present",
-                False: "State file is missing"
-            },
-            "state_data_readable": {
-                True: "State data is readable",
-                False: "Cannot read state data"
-            },
-            "activities_dir_exists": {
-                True: "Activities directory is present",
-                False: "Activities directory is missing"
-            },
-            "logs_dir_exists": {
-                True: "Logs directory is present",
-                False: "Logs directory is missing"
-            },
-            "service_script_exists": {
-                True: "Service script is present",
-                False: "Service script is missing"
-            }
-        }
-        
-        component_messages = messages.get(component, {
-            True: f"{component} is healthy",
-            False: f"{component} has issues"
-        })
-        
-        return component_messages[healthy]
-    
-    def _get_issue_description(self, component: str) -> str:
-        """Get issue description for failed component"""
-        descriptions = {
-            "greythr_project_accessible": "GreytHR project directory cannot be accessed",
-            "state_file_exists": "State file is missing - service may not be running",
-            "state_data_readable": "State data cannot be read - file may be corrupted",
-            "activities_dir_exists": "Activities directory is missing",
-            "logs_dir_exists": "Logs directory is missing",
-            "service_script_exists": "Service management script is missing"
-        }
-        
-        return descriptions.get(component, f"Component {component} is not healthy")
-    
-    def _get_recommendation(self, component: str) -> str:
-        """Get recommendation for failed component"""
-        recommendations = {
-            "greythr_project_accessible": "Check the project path in configuration",
-            "state_file_exists": "Start the GreytHR service to generate state file",
-            "state_data_readable": "Check file permissions and disk space",
-            "activities_dir_exists": "Run GreytHR service to create activities directory",
-            "logs_dir_exists": "Check disk space and file permissions",
-            "service_script_exists": "Verify GreytHR installation integrity"
-        }
-        
-        return recommendations.get(component, f"Check {component} configuration")
+

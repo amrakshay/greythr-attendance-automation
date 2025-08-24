@@ -19,7 +19,7 @@ from src.dashboard.routes import router as dashboard_router
 from src.service.routes import router as service_router
 from src.activities.routes import router as activities_router
 from src.logs.routes import router as logs_router
-from src.export.routes import router as export_router
+
 
 # Initialize logging
 logger = setup_logging()
@@ -51,7 +51,7 @@ app.include_router(dashboard_router)
 app.include_router(service_router)
 app.include_router(activities_router)
 app.include_router(logs_router)
-app.include_router(export_router)
+
 
 # Setup static files and templates
 app.mount("/static", StaticFiles(directory="src/static"), name="static")

@@ -543,14 +543,7 @@ class GreytHRDashboard {
         }
     }
     
-    updateStatusCard(cardId, status) {
-        // Will be implemented in Phase 2
-        const card = document.getElementById(cardId);
-        if (card) {
-            // Update card content based on status
-            console.log(`Updating ${cardId} with status:`, status);
-        }
-    }
+
     
     startAutoRefresh() {
         // Will be implemented in Phase 2
