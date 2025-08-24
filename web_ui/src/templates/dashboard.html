@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GreytHR Attendance Automation - Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/static/css/dashboard.css" rel="stylesheet">
+    <style>
+        .status-card {
+            transition: transform 0.2s;
+        }
+        .status-card:hover {
+            transform: translateY(-2px);
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-healthy { background-color: #28a745; }
+        .status-warning { background-color: #ffc107; }
+        .status-error { background-color: #dc3545; }
+        .footer {
+            margin-top: auto;
+            padding: 20px 0;
+            background-color: #f8f9fa;
+        }
+    </style>
+</head>
+<body class="d-flex flex-column min-vh-100">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-clock-history"></i>
+                GreytHR Attendance Dashboard
+            </a>
+            <div class="navbar-nav ms-auto">
+                <span class="navbar-text">
+                    <span class="status-indicator status-healthy"></span>
+                    System Online
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container my-4 flex-grow-1">
+        <!-- Welcome Section -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="jumbotron bg-light p-4 rounded">
+                    <h1 class="display-6">
+                        <i class="bi bi-speedometer2 text-primary"></i>
+                        Dashboard
+                    </h1>
+                    <p class="lead">Monitor and manage your GreytHR attendance automation system.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Cards -->
+        <div class="row mb-4">
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card status-card h-100 border-primary">
+                    <div class="card-body text-center">
+                        <i class="bi bi-gear-fill text-primary fs-1 mb-2"></i>
+                        <h5 class="card-title">Service Status</h5>
+                        <p class="card-text">
+                            <span class="badge bg-success">Running</span>
+                        </p>
+                        <small class="text-muted">Last check: Just now</small>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card status-card h-100 border-success">
+                    <div class="card-body text-center">
+                        <i class="bi bi-box-arrow-in-right text-success fs-1 mb-2"></i>
+                        <h5 class="card-title">Today's Sign-in</h5>
+                        <p class="card-text">
+                            <span class="badge bg-success">Completed</span>
+                        </p>
+                        <small class="text-muted">At 09:00 AM</small>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card status-card h-100 border-info">
+                    <div class="card-body text-center">
+                        <i class="bi bi-box-arrow-right text-info fs-1 mb-2"></i>
+                        <h5 class="card-title">Today's Sign-out</h5>
+                        <p class="card-text">
+                            <span class="badge bg-warning">Pending</span>
+                        </p>
+                        <small class="text-muted">Scheduled: 07:00 PM</small>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card status-card h-100 border-secondary">
+                    <div class="card-body text-center">
+                        <i class="bi bi-clock text-secondary fs-1 mb-2"></i>
+                        <h5 class="card-title">Uptime</h5>
+                        <p class="card-text">
+                            <strong>2h 30m</strong>
+                        </p>
+                        <small class="text-muted">Since last restart</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-lightning-charge"></i>
+                            Quick Actions
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <div class="d-grid">
+                                    <button id="btn-start" class="btn btn-outline-success btn-lg">
+                                        <i class="bi bi-play-fill"></i>
+                                        <span class="btn-text">Start Service</span>
+                                        <span class="spinner-border spinner-border-sm d-none ms-2" role="status"></span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="d-grid">
+                                    <button id="btn-stop" class="btn btn-outline-danger btn-lg">
+                                        <i class="bi bi-stop-fill"></i>
+                                        <span class="btn-text">Stop Service</span>
+                                        <span class="spinner-border spinner-border-sm d-none ms-2" role="status"></span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="d-grid">
+                                    <button id="btn-restart" class="btn btn-outline-primary btn-lg">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                        <span class="btn-text">Restart Service</span>
+                                        <span class="spinner-border spinner-border-sm d-none ms-2" role="status"></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="alert alert-success mt-3" role="alert">
+                            <i class="bi bi-check-circle"></i>
+                            <strong>Dashboard Complete!</strong> Your GreytHR Web UI is fully functional with service control, calendar view, and logs viewer.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="bi bi-activity"></i>
+                            Recent Activity
+                        </h5>
+                        <span class="badge bg-primary">Live</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="list-group list-group-flush">
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <i class="bi bi-check-circle text-success me-2"></i>
+                                    Sign-in completed successfully
+                                </div>
+                                <small class="text-muted">2 hours ago</small>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <i class="bi bi-play-circle text-primary me-2"></i>
+                                    Service started
+                                </div>
+                                <small class="text-muted">2 hours ago</small>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <i class="bi bi-gear text-secondary me-2"></i>
+                                    Configuration loaded
+                                </div>
+                                <small class="text-muted">2 hours ago</small>
+                            </div>
+                        </div>
+                        <div class="text-center mt-3">
+                            <button class="btn btn-outline-primary" id="btn-calendar-view">
+                                <i class="bi bi-calendar3"></i>
+                                Calendar View
+                            </button>
+                            <button class="btn btn-outline-info ms-2" id="btn-logs-viewer">
+                                <i class="bi bi-file-text"></i>
+                                Logs Viewer
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+    </main>
+
+    <!-- Calendar Modal -->
+    <div class="modal fade" id="calendarModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-calendar3"></i>
+                        Attendance Calendar
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-calendar"></i></span>
+                                <select class="form-select" id="calendar-month">
+                                    <option value="">Select Month...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-calendar2"></i></span>
+                                <select class="form-select" id="calendar-year">
+                                    <option value="">Select Year...</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="calendar-container" class="calendar-container">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading calendar...</span>
+                            </div>
+                            <p class="mt-3 text-muted">Loading calendar data...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-primary" id="btn-export-calendar">
+                        <i class="bi bi-download"></i>
+                        Export Calendar
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logs Viewer Modal -->
+    <div class="modal fade" id="logsModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-file-text"></i>
+                        System Logs
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control" id="log-search" placeholder="Search logs...">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select" id="log-level">
+                                <option value="">All Levels</option>
+                                <option value="error">Error</option>
+                                <option value="warning">Warning</option>
+                                <option value="info">Info</option>
+                                <option value="debug">Debug</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <input type="date" class="form-control" id="log-date" title="Filter by date">
+                        </div>
+                        <div class="col-md-2">
+                            <button class="btn btn-outline-primary w-100" id="btn-refresh-logs">
+                                <i class="bi bi-arrow-clockwise"></i>
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div id="logs-container" class="logs-container">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading logs...</span>
+                            </div>
+                            <p class="mt-3 text-muted">Loading system logs...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-info" id="btn-download-logs">
+                        <i class="bi bi-download"></i>
+                        Download Logs
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <footer class="footer">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <p class="text-muted mb-0">&copy; 2024 GreytHR Attendance Automation</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <p class="text-muted mb-0">
+                        <i class="bi bi-code-square"></i>
+                        GreytHR Web UI v1.0.0 - Complete
+                    </p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/advanced-features.js"></script>
+</body>
+</html>

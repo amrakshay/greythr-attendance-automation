@@ -1,0 +1,75 @@
+# GreytHR Web UI Dashboard Configuration
+# YAML configuration following the established pattern
+
+# Server configuration
+server:
+  host: "127.0.0.1"
+  port: 8000
+  
+# GreytHR project integration
+greythr:
+  # Path to the GreytHR attendance automation project
+  # This should point to the directory containing greythr_api.py
+  project_path: "/Users/akshay/Workarea/github/amrakshay/greythr-attendance-automation"
+  
+  # Data directories (relative to project_path)
+  state_file: "state/current_state.json"
+  activities_dir: "activities"
+  logs_dir: "logs"
+  
+  # Service script path
+  service_script: "greythr_service.sh"
+
+# UI Configuration
+ui:
+  # Auto refresh interval for dashboard (seconds)
+  auto_refresh_interval: 30
+  
+  # Number of log lines to show by default
+  log_tail_lines: 100
+  
+  # Pagination defaults
+  default_page_size: 25
+  max_page_size: 100
+  
+  # Date format for display
+  date_format: "%Y-%m-%d"
+  datetime_format: "%Y-%m-%d %H:%M:%S"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  file_max_size: "10MB"
+  backup_count: 5
+  
+# WebSocket configuration
+websocket:
+  # Ping interval (seconds)
+  ping_interval: 30
+  
+  # Connection timeout (seconds)
+  timeout: 300
+
+# CORS configuration
+cors:
+  allow_origins:
+    - "http://localhost:8000"
+    - "http://127.0.0.1:8000"
+  allow_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+  allow_headers:
+    - "*"
+
+# Security settings
+security:
+  # Enable/disable API authentication (future feature)
+  enable_auth: false
+  
+  # Allow file downloads
+  allow_downloads: true
+  
+  # Maximum file size for uploads (if needed)
+  max_upload_size: "1MB"
