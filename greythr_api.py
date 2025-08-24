@@ -249,18 +249,27 @@ class AttendanceStateManager:
         state['signin_attempts'] = state.get('signin_attempts', 0) + 1
         state['signin_last_error'] = error_msg
         
-        # Calculate next retry time with exponential backoff
+        # Get retry configuration
         max_retries = int(os.getenv('MAX_RETRY_ATTEMPTS', '5'))
-        base_delay = int(os.getenv('BASE_RETRY_DELAY', '300'))  # 5 minutes
+        retry_strategy = os.getenv('RETRY_STRATEGY', 'exponential').lower()  # exponential or fixed
         
         if state['signin_failed_attempts'] <= max_retries:
-            # Exponential backoff: 5min, 15min, 45min, 135min, 405min
-            delay_seconds = base_delay * (3 ** (state['signin_failed_attempts'] - 1))
+            if retry_strategy == 'fixed':
+                # Fixed delay retry
+                fixed_delay = int(os.getenv('FIXED_RETRY_DELAY', '300'))  # 5 minutes default
+                delay_seconds = fixed_delay
+                strategy_info = f"fixed {fixed_delay//60}min"
+            else:
+                # Exponential backoff (default): 5min, 15min, 45min, 135min, 405min
+                base_delay = int(os.getenv('BASE_RETRY_DELAY', '300'))  # 5 minutes
+                delay_seconds = base_delay * (3 ** (state['signin_failed_attempts'] - 1))
+                strategy_info = f"exponential backoff"
+            
             # Add jitter to avoid thundering herd
             jitter = random.randint(0, 60)
             next_retry = datetime.now(self.tz) + timedelta(seconds=delay_seconds + jitter)
             state['signin_next_retry'] = next_retry.isoformat()
-            logger.info(f"🔄 Sign-in retry #{state['signin_failed_attempts']} scheduled for {next_retry.strftime('%H:%M:%S')}")
+            logger.info(f"🔄 Sign-in retry #{state['signin_failed_attempts']} scheduled for {next_retry.strftime('%H:%M:%S')} ({strategy_info})")
         else:
             state['signin_next_retry'] = None
             logger.error(f"❌ Sign-in max retries ({max_retries}) exceeded. Giving up for today.")
@@ -274,18 +283,27 @@ class AttendanceStateManager:
         state['signout_attempts'] = state.get('signout_attempts', 0) + 1
         state['signout_last_error'] = error_msg
         
-        # Calculate next retry time with exponential backoff
+        # Get retry configuration
         max_retries = int(os.getenv('MAX_RETRY_ATTEMPTS', '5'))
-        base_delay = int(os.getenv('BASE_RETRY_DELAY', '300'))  # 5 minutes
+        retry_strategy = os.getenv('RETRY_STRATEGY', 'exponential').lower()  # exponential or fixed
         
         if state['signout_failed_attempts'] <= max_retries:
-            # Exponential backoff: 5min, 15min, 45min, 135min, 405min
-            delay_seconds = base_delay * (3 ** (state['signout_failed_attempts'] - 1))
+            if retry_strategy == 'fixed':
+                # Fixed delay retry
+                fixed_delay = int(os.getenv('FIXED_RETRY_DELAY', '300'))  # 5 minutes default
+                delay_seconds = fixed_delay
+                strategy_info = f"fixed {fixed_delay//60}min"
+            else:
+                # Exponential backoff (default): 5min, 15min, 45min, 135min, 405min
+                base_delay = int(os.getenv('BASE_RETRY_DELAY', '300'))  # 5 minutes
+                delay_seconds = base_delay * (3 ** (state['signout_failed_attempts'] - 1))
+                strategy_info = f"exponential backoff"
+            
             # Add jitter to avoid thundering herd
             jitter = random.randint(0, 60)
             next_retry = datetime.now(self.tz) + timedelta(seconds=delay_seconds + jitter)
             state['signout_next_retry'] = next_retry.isoformat()
-            logger.info(f"🔄 Sign-out retry #{state['signout_failed_attempts']} scheduled for {next_retry.strftime('%H:%M:%S')}")
+            logger.info(f"🔄 Sign-out retry #{state['signout_failed_attempts']} scheduled for {next_retry.strftime('%H:%M:%S')} ({strategy_info})")
         else:
             state['signout_next_retry'] = None
             logger.error(f"❌ Sign-out max retries ({max_retries}) exceeded. Giving up for today.")
@@ -493,7 +511,9 @@ class StateTracker:
                     'test_mode': os.getenv('TEST_MODE', 'false').lower() == 'true',
                     'timezone': 'Asia/Kolkata',
                     'max_retry_attempts': int(os.getenv('MAX_RETRY_ATTEMPTS', '5')),
-                    'base_retry_delay_minutes': int(os.getenv('BASE_RETRY_DELAY', '300')) // 60
+                    'retry_strategy': os.getenv('RETRY_STRATEGY', 'exponential').lower(),
+                    'base_retry_delay_minutes': int(os.getenv('BASE_RETRY_DELAY', '300')) // 60,
+                    'fixed_retry_delay_minutes': int(os.getenv('FIXED_RETRY_DELAY', '300')) // 60
                 },
                 'schedule': {
                     'next_signin': None,
@@ -1259,7 +1279,9 @@ def main():
         logger.info("SIGNOUT_TIME=19:00")
         logger.info("TEST_MODE=true  # For testing on weekends")
         logger.info("MAX_RETRY_ATTEMPTS=5  # Max retry attempts per action")
-        logger.info("BASE_RETRY_DELAY=300  # Base delay in seconds (5min)")
+        logger.info("RETRY_STRATEGY=exponential  # exponential or fixed")
+        logger.info("BASE_RETRY_DELAY=300  # Base delay in seconds for exponential (5min)")
+        logger.info("FIXED_RETRY_DELAY=300  # Fixed delay in seconds (5min default)")
         return
     
     # Choose action
@@ -1465,9 +1487,17 @@ def main():
         logger.info("🕐 Timezone: Asia/Kolkata (IST)")
         
         logger.info(f"🔄 Retry Configuration:")
+        retry_strategy = os.getenv('RETRY_STRATEGY', 'exponential').lower()
+        logger.info(f"   Strategy: {retry_strategy.capitalize()}")
         logger.info(f"   Max Attempts: {max_retries}")
-        logger.info(f"   Base Delay: {base_delay} minutes")
-        logger.info(f"   Retry Schedule: {base_delay}min → {base_delay*3}min → {base_delay*9}min → {base_delay*27}min → {base_delay*81}min")
+        
+        if retry_strategy == 'fixed':
+            fixed_delay = int(os.getenv('FIXED_RETRY_DELAY', '300')) // 60
+            logger.info(f"   Fixed Delay: {fixed_delay} minutes")
+            logger.info(f"   Retry Schedule: {fixed_delay}min → {fixed_delay}min → {fixed_delay}min → {fixed_delay}min → {fixed_delay}min")
+        else:
+            logger.info(f"   Base Delay: {base_delay} minutes")
+            logger.info(f"   Retry Schedule: {base_delay}min → {base_delay*3}min → {base_delay*9}min → {base_delay*27}min → {base_delay*81}min")
         
         logger.info(f"📂 Storage:")
         logger.info("   Activities: ./activities/")
@@ -1542,6 +1572,11 @@ def main():
         logger.info(f"   Sign-out Time: {config.get('signout_time', 'N/A')} IST")
         logger.info(f"   Test Mode: {'ENABLED' if config.get('test_mode') else 'DISABLED'}")
         logger.info(f"   Max Retry Attempts: {config.get('max_retry_attempts', 'N/A')}")
+        logger.info(f"   Retry Strategy: {config.get('retry_strategy', 'exponential').capitalize()}")
+        if config.get('retry_strategy') == 'fixed':
+            logger.info(f"   Fixed Retry Delay: {config.get('fixed_retry_delay_minutes', 'N/A')} minutes")
+        else:
+            logger.info(f"   Base Retry Delay: {config.get('base_retry_delay_minutes', 'N/A')} minutes")
         
         logger.info(f"\n⏰ Schedule:")
         schedule_info = current_state.get('schedule', {})
