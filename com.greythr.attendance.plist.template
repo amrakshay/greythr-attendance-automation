@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Service Identification -->
+    <key>Label</key>
+    <string>com.greythr.attendance</string>
+    
+    <!-- Program Configuration -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{PROJECT_PATH}}/.venv/bin/python</string>
+        <string>{{PROJECT_PATH}}/greythr_api.py</string>
+        <string>--daemon</string>
+    </array>
+    
+    <!-- Working Directory -->
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_PATH}}</string>
+    
+    <!-- Environment Variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{{PROJECT_PATH}}/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    
+    <!-- Startup Configuration -->
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <!-- Keep the service running -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    
+    <!-- Restart Configuration -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+    
+    <!-- Logging Configuration -->
+    <key>StandardOutPath</key>
+    <string>{{PROJECT_PATH}}/logs/launchd_stdout.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>{{PROJECT_PATH}}/logs/launchd_stderr.log</string>
+    
+    <!-- Process Configuration -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    
+    <!-- Start only when user is logged in -->
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    
+    <!-- Resource Limits -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>1024</integer>
+    </dict>
+    
+    <!-- Nice value (lower priority) -->
+    <key>Nice</key>
+    <integer>5</integer>
+    
+</dict>
+</plist>

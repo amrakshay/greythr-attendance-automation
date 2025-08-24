@@ -20,6 +20,10 @@ import random
 import yaml
 import platform
 import psutil
+import signal
+import sys
+import atexit
+import argparse
 
 # Selenium imports
 try:
@@ -364,6 +368,91 @@ class AttendanceStateManager:
             'signin_next_retry': state.get('signin_next_retry'),
             'signout_next_retry': state.get('signout_next_retry')
         }
+
+
+class SingleInstanceManager:
+    """Ensures only one instance of the script runs at a time using PID file locking"""
+    
+    def __init__(self, lock_file_path="greythr_attendance.lock"):
+        self.lock_file = Path(lock_file_path)
+        self.pid = os.getpid()
+        self.logger = logging.getLogger('greythr_automation.single_instance')
+        
+    def is_another_instance_running(self):
+        """Check if another instance is already running"""
+        if not self.lock_file.exists():
+            return False
+        
+        try:
+            with open(self.lock_file, 'r') as f:
+                old_pid = int(f.read().strip())
+            
+            # Check if the process with this PID is still running
+            try:
+                # Send signal 0 to check if process exists (doesn't actually send a signal)
+                os.kill(old_pid, 0)
+                self.logger.warning(f"Another instance is running with PID {old_pid}")
+                return True
+            except OSError:
+                # Process doesn't exist, remove stale lock file
+                self.logger.info(f"Removing stale lock file (PID {old_pid} not found)")
+                self.lock_file.unlink()
+                return False
+                
+        except (ValueError, FileNotFoundError):
+            # Invalid lock file, remove it
+            if self.lock_file.exists():
+                self.lock_file.unlink()
+            return False
+    
+    def acquire_lock(self):
+        """Acquire the instance lock"""
+        if self.is_another_instance_running():
+            self.logger.error("❌ Another instance is already running!")
+            self.logger.error("❌ Only one instance of GreytHR Attendance Automation is allowed")
+            self.logger.info("💡 If you're sure no other instance is running, delete the lock file:")
+            self.logger.info(f"   rm {self.lock_file}")
+            return False
+        
+        try:
+            # Create lock file with current PID
+            with open(self.lock_file, 'w') as f:
+                f.write(str(self.pid))
+            
+            # Register cleanup function to remove lock file on exit
+            atexit.register(self.release_lock)
+            
+            # Handle signals to cleanup lock file
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
+            
+            self.logger.debug(f"✅ Instance lock acquired (PID: {self.pid})")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to acquire instance lock: {e}")
+            return False
+    
+    def release_lock(self):
+        """Release the instance lock"""
+        try:
+            if self.lock_file.exists():
+                with open(self.lock_file, 'r') as f:
+                    lock_pid = int(f.read().strip())
+                
+                # Only remove the lock if it's our PID
+                if lock_pid == self.pid:
+                    self.lock_file.unlink()
+                    self.logger.debug(f"✅ Instance lock released (PID: {self.pid})")
+                    
+        except Exception as e:
+            self.logger.error(f"❌ Error releasing instance lock: {e}")
+    
+    def _signal_handler(self, signum, frame):
+        """Handle termination signals"""
+        self.logger.info(f"📡 Received signal {signum}, shutting down gracefully...")
+        self.release_lock()
+        sys.exit(0)
 
 
 class StateTracker:
@@ -1065,9 +1154,19 @@ class GreytHRScheduler:
         return scheduler_thread
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='GreytHR Attendance Automation')
+    parser.add_argument('--daemon', action='store_true', help='Run in daemon mode (for startup services)')
+    args = parser.parse_args()
+    
     if not SELENIUM_AVAILABLE:
         logger.error("❌ Selenium not installed! Run: pip install selenium webdriver-manager")
         return
+    
+    # Initialize single instance manager
+    instance_manager = SingleInstanceManager()
+    if not instance_manager.acquire_lock():
+        return 1  # Exit with error code if another instance is running
     
     # Check if test mode is enabled for display
     test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
@@ -1082,6 +1181,59 @@ def main():
     # Initialize state tracker for dashboard monitoring
     state_tracker = StateTracker()
     state_tracker.update_status('starting', 'Initializing GreytHR automation script')
+    
+    # Handle daemon mode
+    if args.daemon:
+        logger.info("🤖 DAEMON MODE - Running in background")
+        logger.info("🔒 Single instance protection: ENABLED")
+        
+        # Get credentials from environment variables
+        url = os.getenv('GREYTHR_URL')
+        username = os.getenv('GREYTHR_USERNAME')
+        password = os.getenv('GREYTHR_PASSWORD')
+        signin_time = os.getenv('SIGNIN_TIME')
+        signout_time = os.getenv('SIGNOUT_TIME')
+        
+        if not all([url, username, password, signin_time, signout_time]):
+            logger.error("❌ Missing required environment variables for daemon mode!")
+            logger.error("Required: GREYTHR_URL, GREYTHR_USERNAME, GREYTHR_PASSWORD, SIGNIN_TIME, SIGNOUT_TIME")
+            return 1
+        
+        logger.info(f"✅ Configuration loaded - Sign in: {signin_time}, Sign out: {signout_time}")
+        logger.info("🚀 Starting background scheduler...")
+        
+        try:
+            # Start the scheduler in daemon mode
+            scheduler = GreytHRScheduler()
+            scheduler_thread = scheduler.start_scheduler()
+            state_tracker.update_schedule_info(daemon_running=True)
+            state_tracker.update_status('daemon_running', 'Background scheduler active')
+            
+            logger.info("✅ Background scheduler started successfully!")
+            logger.info(f"📋 The daemon will automatically:")
+            logger.info(f"   • Sign in at {scheduler.signin_time} IST on {'all days' if test_mode else 'weekdays'}")
+            logger.info(f"   • Sign out at {scheduler.signout_time} IST on {'all days' if test_mode else 'weekdays'}")
+            logger.info(f"   • Retry failed attempts with exponential backoff")
+            logger.info(f"   • Log all activities to: {Path.cwd() / 'logs'}")
+            logger.info(f"   • Store state data to: {Path.cwd() / 'state'}")
+            logger.info("🔄 Daemon is now running... (Ctrl+C to stop)")
+            
+            # Keep the main thread alive in daemon mode
+            try:
+                while True:
+                    time.sleep(60)  # Check every minute
+                    state_tracker.update_today_summary()  # Update state periodically
+            except KeyboardInterrupt:
+                logger.info("📡 Received interrupt signal, shutting down gracefully...")
+                state_tracker.update_status('shutting_down', 'Daemon received shutdown signal')
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to start daemon: {e}")
+            state_tracker.log_error(f"Daemon startup failed: {str(e)}")
+            return 1
+        
+        logger.info("👋 Daemon shutdown complete")
+        return 0
     
     if test_mode:
         logger.info("🧪 GreytHR API Attendance Automation - TEST MODE")
@@ -1439,13 +1591,13 @@ def main():
     # Only show success/failure for immediate actions
     if choice in ["1", "2", "3"]:
         logger.info("=" * 50)
-        if success:
+    if success:
             logger.info("🎉 AUTOMATION COMPLETED SUCCESSFULLY!")
             logger.info("🎉 Automation completed successfully")
-        else:
+    else:
             logger.error("❌ AUTOMATION FAILED!")
             logger.info("❌ Automation failed")
-        logger.info("=" * 50)
+            logger.info("=" * 50)
     
     # Log script exit (except for daemon mode)
     if choice != "4":
