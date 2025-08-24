@@ -134,15 +134,37 @@ class AttendanceStateManager:
         state = self.load_today_state()
         return state.get('signout_completed', False)
     
-    def should_signin_now(self, signin_time_str):
+    def should_signin_now(self, signin_time_str, signout_time_str):
         """Check if we should do sign-in now (catch-up logic)"""
         now = datetime.now(self.tz)
+        
         signin_time = datetime.strptime(signin_time_str, '%H:%M').time()
         signin_datetime = datetime.combine(now.date(), signin_time)
         signin_datetime = self.tz.localize(signin_datetime)
         
-        # If current time is past sign-in time and sign-in not completed
-        return now >= signin_datetime and not self.is_signin_completed()
+        signout_time = datetime.strptime(signout_time_str, '%H:%M').time()
+        signout_datetime = datetime.combine(now.date(), signout_time)
+        signout_datetime = self.tz.localize(signout_datetime)
+        
+        current_time_str = now.strftime('%H:%M')
+        
+        # Already completed
+        if self.is_signin_completed():
+            logger.debug(f"Sign-in already completed today")
+            return False
+            
+        # Don't sign in if we're past sign-out time (missed window)
+        if now >= signout_datetime:
+            logger.info(f"⏰ MISSED WINDOW: Current time {current_time_str} is past sign-out time {signout_time_str}")
+            return False
+            
+        # Check if we're past sign-in time
+        if now >= signin_datetime:
+            logger.info(f"⏰ CATCH-UP NEEDED: Current time {current_time_str} is past sign-in time {signin_time_str}")
+            return True
+        
+        logger.debug(f"No sign-in needed: Current time {current_time_str} is before sign-in time {signin_time_str}")
+        return False
     
     def should_signout_now(self, signout_time_str):
         """Check if we should do sign-out now (catch-up logic)"""
@@ -151,10 +173,25 @@ class AttendanceStateManager:
         signout_datetime = datetime.combine(now.date(), signout_time)
         signout_datetime = self.tz.localize(signout_datetime)
         
-        # If current time is past sign-out time, sign-in completed, and sign-out not completed
-        return (now >= signout_datetime and 
-                self.is_signin_completed() and 
-                not self.is_signout_completed())
+        current_time_str = now.strftime('%H:%M')
+        
+        # Already completed
+        if self.is_signout_completed():
+            logger.debug(f"Sign-out already completed today")
+            return False
+            
+        # Must have signed in first
+        if not self.is_signin_completed():
+            logger.debug(f"Cannot sign out - no sign-in recorded for today")
+            return False
+        
+        # Check if we're past sign-out time
+        if now >= signout_datetime:
+            logger.info(f"⏰ CATCH-UP NEEDED: Current time {current_time_str} is past sign-out time {signout_time_str}")
+            return True
+            
+        logger.debug(f"No sign-out needed: Current time {current_time_str} is before sign-out time {signout_time_str}")
+        return False
     
     def get_status_summary(self):
         """Get today's status summary"""
@@ -472,7 +509,7 @@ class GreytHRScheduler:
             logger.info("🧪 TEST MODE: Running checks regardless of day of week")
             
         # Check if we should do sign-in now
-        if self.state_manager.should_signin_now(self.signin_time):
+        if self.state_manager.should_signin_now(self.signin_time, self.signout_time):
             logger.info("🚨 CATCH-UP: Sign-in is overdue! Executing now...")
             self.scheduled_signin()
         
@@ -565,8 +602,9 @@ def main():
     print("5. 📊 View Today's Status")
     print("6. ℹ️  View Schedule Configuration")
     print("7. 🚨 Force Catch-up Check (Check for missed attendance)")
+    print("8. 🧪 Test Missed Window Logic (Debug)")
     
-    choice = input("Choose (1-7): ").strip()
+    choice = input("Choose (1-8): ").strip()
     
     # Create API automation instance
     greythr_api = GreytHRAttendanceAPI()
@@ -678,6 +716,36 @@ def main():
         scheduler = GreytHRScheduler()
         scheduler.check_and_catchup()
         print("✅ Catch-up check completed!")
+        return  # Don't show success/failure message
+        
+    elif choice == "8":
+        print("\n🧪 Testing Missed Window Logic...")
+        print("=" * 40)
+        state_manager = AttendanceStateManager()
+        signin_time = os.getenv('SIGNIN_TIME', '09:00')
+        signout_time = os.getenv('SIGNOUT_TIME', '19:00')
+        
+        current_time = datetime.now(pytz.timezone('Asia/Kolkata'))
+        print(f"⏰ Current Time: {current_time.strftime('%H:%M')}")
+        print(f"📅 Sign-in Time: {signin_time}")
+        print(f"📅 Sign-out Time: {signout_time}")
+        print()
+        
+        # Test sign-in logic
+        should_signin = state_manager.should_signin_now(signin_time, signout_time)
+        print(f"🔍 Should Sign-in Now: {'✅ YES' if should_signin else '❌ NO'}")
+        
+        # Test sign-out logic  
+        should_signout = state_manager.should_signout_now(signout_time)
+        print(f"🔍 Should Sign-out Now: {'✅ YES' if should_signout else '❌ NO'}")
+        
+        print("\n📊 Current Status:")
+        signin_completed = state_manager.is_signin_completed()
+        signout_completed = state_manager.is_signout_completed()
+        print(f"   Sign-in Completed: {'✅ YES' if signin_completed else '❌ NO'}")
+        print(f"   Sign-out Completed: {'✅ YES' if signout_completed else '❌ NO'}")
+        
+        print("=" * 40)
         return  # Don't show success/failure message
         
     else:
