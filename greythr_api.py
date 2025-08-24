@@ -11,10 +11,11 @@ import os
 import logging
 import schedule
 import threading
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
 import pytz
 from pathlib import Path
+import random
 
 # Selenium imports
 try:
@@ -91,6 +92,12 @@ class AttendanceStateManager:
             'signout_time': None,
             'signin_attempts': 0,
             'signout_attempts': 0,
+            'signin_failed_attempts': 0,
+            'signout_failed_attempts': 0,
+            'signin_next_retry': None,
+            'signout_next_retry': None,
+            'signin_last_error': None,
+            'signout_last_error': None,
             'last_updated': today.isoformat()
         }
     
@@ -193,17 +200,131 @@ class AttendanceStateManager:
         logger.debug(f"No sign-out needed: Current time {current_time_str} is before sign-out time {signout_time_str}")
         return False
     
+    def mark_signin_failed(self, error_msg):
+        """Mark sign-in attempt as failed and schedule retry"""
+        state = self.load_today_state()
+        state['signin_failed_attempts'] = state.get('signin_failed_attempts', 0) + 1
+        state['signin_attempts'] = state.get('signin_attempts', 0) + 1
+        state['signin_last_error'] = error_msg
+        
+        # Calculate next retry time with exponential backoff
+        max_retries = int(os.getenv('MAX_RETRY_ATTEMPTS', '5'))
+        base_delay = int(os.getenv('BASE_RETRY_DELAY', '300'))  # 5 minutes
+        
+        if state['signin_failed_attempts'] <= max_retries:
+            # Exponential backoff: 5min, 15min, 45min, 135min, 405min
+            delay_seconds = base_delay * (3 ** (state['signin_failed_attempts'] - 1))
+            # Add jitter to avoid thundering herd
+            jitter = random.randint(0, 60)
+            next_retry = datetime.now(self.tz) + timedelta(seconds=delay_seconds + jitter)
+            state['signin_next_retry'] = next_retry.isoformat()
+            logger.info(f"🔄 Sign-in retry #{state['signin_failed_attempts']} scheduled for {next_retry.strftime('%H:%M:%S')}")
+        else:
+            state['signin_next_retry'] = None
+            logger.error(f"❌ Sign-in max retries ({max_retries}) exceeded. Giving up for today.")
+        
+        self.save_today_state(state)
+    
+    def mark_signout_failed(self, error_msg):
+        """Mark sign-out attempt as failed and schedule retry"""
+        state = self.load_today_state()
+        state['signout_failed_attempts'] = state.get('signout_failed_attempts', 0) + 1
+        state['signout_attempts'] = state.get('signout_attempts', 0) + 1
+        state['signout_last_error'] = error_msg
+        
+        # Calculate next retry time with exponential backoff
+        max_retries = int(os.getenv('MAX_RETRY_ATTEMPTS', '5'))
+        base_delay = int(os.getenv('BASE_RETRY_DELAY', '300'))  # 5 minutes
+        
+        if state['signout_failed_attempts'] <= max_retries:
+            # Exponential backoff: 5min, 15min, 45min, 135min, 405min
+            delay_seconds = base_delay * (3 ** (state['signout_failed_attempts'] - 1))
+            # Add jitter to avoid thundering herd
+            jitter = random.randint(0, 60)
+            next_retry = datetime.now(self.tz) + timedelta(seconds=delay_seconds + jitter)
+            state['signout_next_retry'] = next_retry.isoformat()
+            logger.info(f"🔄 Sign-out retry #{state['signout_failed_attempts']} scheduled for {next_retry.strftime('%H:%M:%S')}")
+        else:
+            state['signout_next_retry'] = None
+            logger.error(f"❌ Sign-out max retries ({max_retries}) exceeded. Giving up for today.")
+        
+        self.save_today_state(state)
+    
+    def should_retry_signin_now(self):
+        """Check if it's time to retry a failed sign-in"""
+        state = self.load_today_state()
+        next_retry_str = state.get('signin_next_retry')
+        
+        if not next_retry_str or state.get('signin_completed'):
+            return False
+            
+        next_retry = datetime.fromisoformat(next_retry_str)
+        now = datetime.now(self.tz)
+        
+        if now >= next_retry:
+            logger.info(f"⏰ Sign-in retry time reached (attempt #{state.get('signin_failed_attempts', 0) + 1})")
+            return True
+        
+        return False
+    
+    def should_retry_signout_now(self):
+        """Check if it's time to retry a failed sign-out"""
+        state = self.load_today_state()
+        next_retry_str = state.get('signout_next_retry')
+        
+        if not next_retry_str or state.get('signout_completed'):
+            return False
+            
+        next_retry = datetime.fromisoformat(next_retry_str)
+        now = datetime.now(self.tz)
+        
+        if now >= next_retry:
+            logger.info(f"⏰ Sign-out retry time reached (attempt #{state.get('signout_failed_attempts', 0) + 1})")
+            return True
+        
+        return False
+    
+    def clear_retry_schedule(self, action):
+        """Clear retry schedule for successful action"""
+        state = self.load_today_state()
+        if action == 'signin':
+            state['signin_next_retry'] = None
+            state['signin_last_error'] = None
+        elif action == 'signout':
+            state['signout_next_retry'] = None
+            state['signout_last_error'] = None
+        self.save_today_state(state)
+    
     def get_status_summary(self):
         """Get today's status summary"""
         state = self.load_today_state()
+        
+        # Check for pending retries
+        signin_status = '✅ Completed' if state.get('signin_completed') else '❌ Pending'
+        signout_status = '✅ Completed' if state.get('signout_completed') else '❌ Pending'
+        
+        if state.get('signin_next_retry') and not state.get('signin_completed'):
+            retry_time = datetime.fromisoformat(state['signin_next_retry'])
+            signin_status = f"🔄 Retry at {retry_time.strftime('%H:%M')}"
+        
+        if state.get('signout_next_retry') and not state.get('signout_completed'):
+            retry_time = datetime.fromisoformat(state['signout_next_retry'])
+            signout_status = f"🔄 Retry at {retry_time.strftime('%H:%M')}"
+        
         return {
             'date': state.get('date'),
-            'signin_status': '✅ Completed' if state.get('signin_completed') else '❌ Pending',
-            'signout_status': '✅ Completed' if state.get('signout_completed') else '❌ Pending',
+            'signin_status': signin_status,
+            'signout_status': signout_status,
             'signin_time': state.get('signin_time'),
             'signout_time': state.get('signout_time'),
             'signin_attempts': state.get('signin_attempts', 0),
-            'signout_attempts': state.get('signout_attempts', 0)
+            'signout_attempts': state.get('signout_attempts', 0),
+            'signin_failed_attempts': state.get('signin_failed_attempts', 0),
+            'signout_failed_attempts': state.get('signout_failed_attempts', 0),
+            'signin_last_error': state.get('signin_last_error'),
+            'signout_last_error': state.get('signout_last_error'),
+            'signin_next_retry': state.get('signin_next_retry'),
+            'signout_next_retry': state.get('signout_next_retry')
         }
 
 class GreytHRAttendanceAPI:
@@ -452,46 +573,69 @@ class GreytHRScheduler:
         status = self.state_manager.get_status_summary()
         logger.info(f"Today's status: Sign-in {status['signin_status']}, Sign-out {status['signout_status']}")
     
-    def scheduled_signin(self):
-        """Scheduled sign-in function"""
+    def scheduled_signin(self, is_retry=False):
+        """Scheduled sign-in function with retry support"""
         # Check if already completed today
         if self.state_manager.is_signin_completed():
+            if is_retry:
+                self.state_manager.clear_retry_schedule('signin')
             logger.info("ℹ️ Sign-in already completed today, skipping...")
             return
-            
-        logger.info("🌅 Starting scheduled SIGN IN...")
+        
+        attempt_type = "RETRY" if is_retry else "SCHEDULED"
+        logger.info(f"🌅 Starting {attempt_type} SIGN IN...")
+        
         try:
             success = self.greythr_api.run_full_automation(self.username, self.password, "Signin")
             if success:
                 self.state_manager.mark_signin_completed()
-                logger.info("✅ Scheduled SIGN IN completed successfully!")
+                self.state_manager.clear_retry_schedule('signin')
+                logger.info(f"✅ {attempt_type} SIGN IN completed successfully!")
             else:
-                logger.error("❌ Scheduled SIGN IN failed!")
+                error_msg = f"{attempt_type} sign-in failed - unknown error"
+                self.state_manager.mark_signin_failed(error_msg)
+                logger.error(f"❌ {attempt_type} SIGN IN failed!")
+                
         except Exception as e:
-            logger.error(f"❌ Scheduled SIGN IN error: {e}")
+            error_msg = f"{attempt_type} sign-in error: {str(e)}"
+            self.state_manager.mark_signin_failed(error_msg)
+            logger.error(f"❌ {attempt_type} SIGN IN error: {e}")
     
-    def scheduled_signout(self):
-        """Scheduled sign-out function"""
+    def scheduled_signout(self, is_retry=False):
+        """Scheduled sign-out function with retry support"""
         # Check if already completed today
         if self.state_manager.is_signout_completed():
+            if is_retry:
+                self.state_manager.clear_retry_schedule('signout')
             logger.info("ℹ️ Sign-out already completed today, skipping...")
             return
             
         # Check if sign-in was done first
         if not self.state_manager.is_signin_completed():
-            logger.warning("⚠️ Cannot sign out - no sign-in recorded for today!")
+            error_msg = "Cannot sign out - no sign-in recorded for today"
+            if is_retry:
+                self.state_manager.mark_signout_failed(error_msg)
+            logger.warning(f"⚠️ {error_msg}!")
             return
-            
-        logger.info("🌇 Starting scheduled SIGN OUT...")
+        
+        attempt_type = "RETRY" if is_retry else "SCHEDULED"
+        logger.info(f"🌇 Starting {attempt_type} SIGN OUT...")
+        
         try:
             success = self.greythr_api.run_full_automation(self.username, self.password, "Signout")
             if success:
                 self.state_manager.mark_signout_completed()
-                logger.info("✅ Scheduled SIGN OUT completed successfully!")
+                self.state_manager.clear_retry_schedule('signout')
+                logger.info(f"✅ {attempt_type} SIGN OUT completed successfully!")
             else:
-                logger.error("❌ Scheduled SIGN OUT failed!")
+                error_msg = f"{attempt_type} sign-out failed - unknown error"
+                self.state_manager.mark_signout_failed(error_msg)
+                logger.error(f"❌ {attempt_type} SIGN OUT failed!")
+                
         except Exception as e:
-            logger.error(f"❌ Scheduled SIGN OUT error: {e}")
+            error_msg = f"{attempt_type} sign-out error: {str(e)}"
+            self.state_manager.mark_signout_failed(error_msg)
+            logger.error(f"❌ {attempt_type} SIGN OUT error: {e}")
     
     def check_and_catchup(self):
         """Check if any attendance actions are overdue and execute them"""
@@ -508,13 +652,18 @@ class GreytHRScheduler:
         if test_mode:
             logger.info("🧪 TEST MODE: Running checks regardless of day of week")
             
-        # Check if we should do sign-in now
-        if self.state_manager.should_signin_now(self.signin_time, self.signout_time):
+        # Check for retries first
+        if self.state_manager.should_retry_signin_now():
+            logger.info("🔄 RETRY: Sign-in retry time reached!")
+            self.scheduled_signin(is_retry=True)
+        elif self.state_manager.should_signin_now(self.signin_time, self.signout_time):
             logger.info("🚨 CATCH-UP: Sign-in is overdue! Executing now...")
             self.scheduled_signin()
         
-        # Check if we should do sign-out now
-        if self.state_manager.should_signout_now(self.signout_time):
+        if self.state_manager.should_retry_signout_now():
+            logger.info("🔄 RETRY: Sign-out retry time reached!")
+            self.scheduled_signout(is_retry=True)
+        elif self.state_manager.should_signout_now(self.signout_time):
             logger.info("🚨 CATCH-UP: Sign-out is overdue! Executing now...")
             self.scheduled_signout()
     
@@ -553,6 +702,19 @@ class GreytHRScheduler:
         def run_scheduler():
             while True:
                 schedule.run_pending()
+                
+                # Check for retries every minute (more frequent than regular schedule)
+                try:
+                    if self.state_manager.should_retry_signin_now():
+                        logger.info("🔄 RETRY: Sign-in retry time reached (background check)!")
+                        self.scheduled_signin(is_retry=True)
+                    
+                    if self.state_manager.should_retry_signout_now():
+                        logger.info("🔄 RETRY: Sign-out retry time reached (background check)!")
+                        self.scheduled_signout(is_retry=True)
+                except Exception as e:
+                    logger.error(f"❌ Error during retry check: {e}")
+                
                 time.sleep(60)  # Check every minute
         
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
@@ -591,6 +753,8 @@ def main():
         print("SIGNIN_TIME=09:00")
         print("SIGNOUT_TIME=19:00")
         print("TEST_MODE=true  # For testing on weekends")
+        print("MAX_RETRY_ATTEMPTS=5  # Max retry attempts per action")
+        print("BASE_RETRY_DELAY=300  # Base delay in seconds (5min)")
         return
     
     # Choose action
@@ -612,25 +776,46 @@ def main():
     success = True  # Default success for non-immediate actions
     
     if choice == "1":
-        success = greythr_api.run_full_automation(username, password, "Signin")
-        if success:
-            state_manager = AttendanceStateManager()
-            state_manager.mark_signin_completed()
+        state_manager = AttendanceStateManager()
+        try:
+            success = greythr_api.run_full_automation(username, password, "Signin")
+            if success:
+                state_manager.mark_signin_completed()
+                state_manager.clear_retry_schedule('signin')
+            else:
+                state_manager.mark_signin_failed("Manual sign-in failed - unknown error")
+        except Exception as e:
+            state_manager.mark_signin_failed(f"Manual sign-in error: {str(e)}")
+            success = False
         
     elif choice == "2":
-        success = greythr_api.run_full_automation(username, password, "Signout")
-        if success:
-            state_manager = AttendanceStateManager()
-            state_manager.mark_signout_completed()
+        state_manager = AttendanceStateManager()
+        try:
+            success = greythr_api.run_full_automation(username, password, "Signout")
+            if success:
+                state_manager.mark_signout_completed()
+                state_manager.clear_retry_schedule('signout')
+            else:
+                state_manager.mark_signout_failed("Manual sign-out failed - unknown error")
+        except Exception as e:
+            state_manager.mark_signout_failed(f"Manual sign-out error: {str(e)}")
+            success = False
         
     elif choice == "3":
         print("\n🔄 Testing both actions...")
         state_manager = AttendanceStateManager()
         
         # Sign In
-        signin_success = greythr_api.run_full_automation(username, password, "Signin")
-        if signin_success:
-            state_manager.mark_signin_completed()
+        try:
+            signin_success = greythr_api.run_full_automation(username, password, "Signin")
+            if signin_success:
+                state_manager.mark_signin_completed()
+                state_manager.clear_retry_schedule('signin')
+            else:
+                state_manager.mark_signin_failed("Test sign-in failed - unknown error")
+        except Exception as e:
+            state_manager.mark_signin_failed(f"Test sign-in error: {str(e)}")
+            signin_success = False
         
         if signin_success:
             print("\n⏳ Waiting 30 seconds before sign out...")
@@ -640,9 +825,17 @@ def main():
             print("\n")
             
             # Sign Out (reuse the same session)
-            signout_success = greythr_api.mark_attendance("Signout")
-            if signout_success:
-                state_manager.mark_signout_completed()
+            try:
+                signout_success = greythr_api.mark_attendance("Signout")
+                if signout_success:
+                    state_manager.mark_signout_completed()
+                    state_manager.clear_retry_schedule('signout')
+                else:
+                    state_manager.mark_signout_failed("Test sign-out failed - unknown error")
+            except Exception as e:
+                state_manager.mark_signout_failed(f"Test sign-out error: {str(e)}")
+                signout_success = False
+                
             success = signin_success and signout_success
         else:
             success = False
@@ -672,7 +865,7 @@ def main():
             
     elif choice == "5":
         print("\n📊 Today's Attendance Status:")
-        print("=" * 40)
+        print("=" * 50)
         state_manager = AttendanceStateManager()
         status = state_manager.get_status_summary()
         
@@ -680,23 +873,42 @@ def main():
         print(f"🌅 Sign In: {status['signin_status']}")
         if status['signin_time']:
             signin_dt = datetime.fromisoformat(status['signin_time'])
-            print(f"    Time: {signin_dt.strftime('%I:%M %p IST')}")
+            print(f"    ✅ Completed at: {signin_dt.strftime('%I:%M %p IST')}")
         
         print(f"🌇 Sign Out: {status['signout_status']}")
         if status['signout_time']:
             signout_dt = datetime.fromisoformat(status['signout_time'])
-            print(f"    Time: {signout_dt.strftime('%I:%M %p IST')}")
+            print(f"    ✅ Completed at: {signout_dt.strftime('%I:%M %p IST')}")
             
-        print(f"🔢 Attempts: Sign-in {status['signin_attempts']}, Sign-out {status['signout_attempts']}")
-        print("=" * 40)
+        print(f"\n📈 Attempt Statistics:")
+        print(f"   Sign-in: {status['signin_attempts']} total, {status['signin_failed_attempts']} failed")
+        print(f"   Sign-out: {status['signout_attempts']} total, {status['signout_failed_attempts']} failed")
+        
+        # Show retry information if applicable
+        if status.get('signin_next_retry'):
+            retry_time = datetime.fromisoformat(status['signin_next_retry'])
+            print(f"\n🔄 Sign-in Retry: Scheduled for {retry_time.strftime('%I:%M %p IST')}")
+            if status.get('signin_last_error'):
+                print(f"   Last Error: {status['signin_last_error']}")
+                
+        if status.get('signout_next_retry'):
+            retry_time = datetime.fromisoformat(status['signout_next_retry'])
+            print(f"\n🔄 Sign-out Retry: Scheduled for {retry_time.strftime('%I:%M %p IST')}")
+            if status.get('signout_last_error'):
+                print(f"   Last Error: {status['signout_last_error']}")
+        
+        print("=" * 50)
         return  # Don't show success/failure message
         
     elif choice == "6":
         print("\n📅 Current Schedule Configuration:")
-        print("=" * 40)
+        print("=" * 50)
         signin_time = os.getenv('SIGNIN_TIME', '09:00')
         signout_time = os.getenv('SIGNOUT_TIME', '19:00')
         test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
+        max_retries = os.getenv('MAX_RETRY_ATTEMPTS', '5')
+        base_delay = int(os.getenv('BASE_RETRY_DELAY', '300')) // 60
+        
         print(f"🌅 Sign In Time: {signin_time} IST")
         print(f"🌇 Sign Out Time: {signout_time} IST")
         if test_mode:
@@ -706,9 +918,16 @@ def main():
             print("📅 Days: Monday to Friday")
             print("🧪 TEST MODE: Disabled")
         print("🕐 Timezone: Asia/Kolkata (IST)")
-        print("📂 Activities stored in: ./activities/")
-        print("📄 Logs stored in: ./logs/")
-        print("=" * 40)
+        
+        print(f"\n🔄 Retry Configuration:")
+        print(f"   Max Attempts: {max_retries}")
+        print(f"   Base Delay: {base_delay} minutes")
+        print(f"   Retry Schedule: {base_delay}min → {base_delay*3}min → {base_delay*9}min → {base_delay*27}min → {base_delay*81}min")
+        
+        print(f"\n📂 Storage:")
+        print("   Activities: ./activities/")
+        print("   Logs: ./logs/")
+        print("=" * 50)
         return  # Don't show success/failure message
         
     elif choice == "7":
