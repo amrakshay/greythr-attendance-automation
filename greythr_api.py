@@ -7,6 +7,8 @@ Login with Selenium -> Use API calls for attendance marking
 import time
 import requests
 import json
+import os
+from dotenv import load_dotenv
 
 # Selenium imports
 try:
@@ -25,8 +27,15 @@ except ImportError:
 
 class GreytHRAttendanceAPI:
     def __init__(self):
-        self.base_url = "https://freestone.greythr.com/"
-        self.api_base = "https://freestone.greythr.com/v3/api"
+        # Load environment variables
+        load_dotenv()
+        
+        # Get configuration from environment variables
+        self.base_url = os.getenv('GREYTHR_URL')
+        if not self.base_url.endswith('/'):
+            self.base_url += '/'
+        
+        self.api_base = f"{self.base_url.rstrip('/')}/v3/api"
         self.attendance_api = f"{self.api_base}/attendance/mark-attendance"
         
         # Initialize requests session
@@ -243,12 +252,17 @@ def main():
     print("This uses the API endpoint you discovered!")
     print()
     
-    # Get credentials
-    username = input("Username/Email: ").strip()
-    password = input("Password: ").strip()
+    # Get credentials from environment variables
+    url = os.getenv('GREYTHR_URL')
+    username = os.getenv('GREYTHR_USERNAME')
+    password = os.getenv('GREYTHR_PASSWORD')
     
-    if not username or not password:
-        print("❌ Credentials required!")
+    if not url or not username or not password:
+        print("❌ Credentials not found in environment!")
+        print("Please create a .env file with:")
+        print("GREYTHR_URL=https://company.greythr.com")
+        print("GREYTHR_USERNAME=your_username")
+        print("GREYTHR_PASSWORD=your_password")
         return
     
     # Choose action
