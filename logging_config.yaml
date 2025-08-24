@@ -1,0 +1,62 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  standard:
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    datefmt: '%Y-%m-%d %H:%M:%S'
+  simple:
+    format: '%(asctime)s - %(levelname)s - %(message)s'
+    datefmt: '%H:%M:%S'
+  console:
+    format: '%(message)s'
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple
+    stream: ext://sys.stdout
+
+  file:
+    class: logging.FileHandler
+    level: DEBUG
+    formatter: standard
+    filename: logs/greythr_attendance_{date}.log
+    mode: 'a'
+    encoding: 'utf8'
+
+loggers:
+  greythr_automation:
+    level: DEBUG
+    handlers: [console, file]
+    propagate: false
+
+  selenium:
+    level: INFO
+    handlers: [file]
+    propagate: false
+
+  selenium.webdriver:
+    level: INFO
+    handlers: [file]
+    propagate: false
+
+  urllib3:
+    level: WARNING
+    handlers: [file]
+    propagate: false
+
+  schedule:
+    level: INFO
+    handlers: [file]
+    propagate: false
+
+  webdriver_manager:
+    level: INFO
+    handlers: [file]
+    propagate: false
+
+root:
+  level: INFO
+  handlers: [console, file]

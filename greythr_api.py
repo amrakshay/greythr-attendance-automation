@@ -9,6 +9,7 @@ import requests
 import json
 import os
 import logging
+import logging.config
 import schedule
 import threading
 from datetime import datetime, date, timedelta
@@ -16,6 +17,7 @@ from dotenv import load_dotenv
 import pytz
 from pathlib import Path
 import random
+import yaml
 
 # Selenium imports
 try:
@@ -30,29 +32,63 @@ try:
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
-    print("❌ Selenium not installed! Run: pip install selenium webdriver-manager")
+    # Note: logger not available yet at import time, will be handled in main()
 
-# Setup logging with per-day log files
+# Setup logging from configuration file
 def setup_logging():
-    """Setup logging configuration with per-day log files"""
+    """Setup logging configuration from YAML file"""
     # Create logs directory
     logs_dir = Path('logs')
     logs_dir.mkdir(exist_ok=True)
     
-    # Generate today's log file name
+    # Generate today's date for log files
     today = datetime.now().strftime('%Y-%m-%d')
-    log_file = logs_dir / f'greythr_attendance_{today}.log'
     
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ],
-        force=True  # Reconfigure if already configured
-    )
-    return logging.getLogger(__name__)
+    # Load logging configuration
+    config_file = Path('logging_config.yaml')
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            # Update file paths with today's date
+            if 'handlers' in config:
+                for handler_name, handler_config in config['handlers'].items():
+                    if 'filename' in handler_config:
+                        filename = handler_config['filename'].format(date=today)
+                        handler_config['filename'] = filename
+            
+            # Apply configuration
+            logging.config.dictConfig(config)
+            
+        except Exception as e:
+            # Fallback to basic configuration
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(f'logs/greythr_attendance_{today}.log'),
+                    logging.StreamHandler()
+                ]
+            )
+            logging.error(f"Failed to load logging config: {e}")
+    else:
+        # Fallback configuration if config file doesn't exist
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(f'logs/greythr_attendance_{today}.log'),
+                logging.StreamHandler()
+            ]
+        )
+        logging.warning("Logging config file not found, using basic configuration")
+    
+    # Return main application logger
+    app_logger = logging.getLogger('greythr_automation')
+    app_logger.info(f"Logging initialized - writing to logs/greythr_attendance_{today}.log")
+    
+    return app_logger
 
 logger = setup_logging()
 
@@ -358,8 +394,9 @@ class GreytHRAttendanceAPI:
         if not SELENIUM_AVAILABLE:
             return False
 
-        print("🚀 Starting Login Process...")
-        print("=" * 50)
+        logger.info("🚀 Starting Login Process...")
+        logger.info("=" * 50)
+        logger.info("🚀 Starting browser-based login process...")
         
         # Setup Chrome options
         chrome_options = Options()
@@ -372,18 +409,18 @@ class GreytHRAttendanceAPI:
         driver = None
         try:
             # Initialize WebDriver
-            print("🔧 Setting up browser...")
+            logger.info("🔧 Setting up browser...")
             service = Service(ChromeDriverManager().install())
             driver = webdriver.Chrome(service=service, options=chrome_options)
             driver.set_page_load_timeout(30)
             
             # Login process
-            print(f"🔐 Logging in to: {self.base_url}")
+            logger.info(f"🔐 Logging in to: {self.base_url}")
             driver.get(self.base_url)
             time.sleep(5)  # Wait for JavaScript to load
             
             # Find and fill login fields
-            print("🔍 Finding login fields...")
+            logger.info("🔍 Finding login fields...")
             
             # Find username field
             username_selectors = [
@@ -399,25 +436,25 @@ class GreytHRAttendanceAPI:
                     username_field = WebDriverWait(driver, 10).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                     )
-                    print(f"✅ Username field found")
+                    logger.info(f"✅ Username field found")
                     break
                 except:
                     continue
             
             if not username_field:
-                print("❌ Could not find username field")
+                logger.error("❌ Could not find username field")
                 return False
             
             # Find password field
             try:
                 password_field = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
-                print("✅ Password field found")
+                logger.info("✅ Password field found")
             except:
-                print("❌ Could not find password field")
+                logger.error("❌ Could not find password field")
                 return False
             
             # Fill credentials
-            print("📝 Entering credentials...")
+            logger.info("📝 Entering credentials...")
             username_field.clear()
             username_field.send_keys(username)
             password_field.clear()
@@ -430,17 +467,20 @@ class GreytHRAttendanceAPI:
             except:
                 password_field.send_keys(Keys.RETURN)
             
-            print("🔘 Login submitted, waiting...")
+            logger.info("🔘 Login submitted, waiting...")
             time.sleep(5)
             
             # Check if login successful
             if "dashboard" in driver.current_url.lower() or "home" in driver.current_url.lower():
-                print("✅ Login successful!")
+                logger.info("✅ Login successful!")
+                logger.info(f"✅ Login successful - redirected to {driver.current_url}")
             else:
-                print(f"⚠️ Redirected to: {driver.current_url}")
+                logger.warning(f"⚠️ Redirected to: {driver.current_url}")
+                logger.warning(f"⚠️ Unexpected redirect to: {driver.current_url}")
             
             # Extract cookies
-            print("🍪 Extracting cookies...")
+            logger.info("🍪 Extracting cookies...")
+            logger.info("🍪 Extracting cookies for API authentication...")
             selenium_cookies = driver.get_cookies()
             
             # Transfer cookies to requests session
@@ -453,25 +493,29 @@ class GreytHRAttendanceAPI:
                     secure=cookie.get('secure', False)
                 )
             
-            print(f"✅ Transferred {len(selenium_cookies)} cookies to session")
+            logger.info(f"✅ Transferred {len(selenium_cookies)} cookies to session")
+            logger.info(f"✅ Transferred {len(selenium_cookies)} cookies to requests session")
             
-            # Print important cookies for debugging
+            # Log important cookies for debugging
             important_cookies = ['access_token', 'PLAY_SESSION']
             for cookie_name in important_cookies:
                 cookie_value = self.session.cookies.get(cookie_name)
                 if cookie_value:
-                    print(f"🔑 {cookie_name}: {cookie_value[:20]}...")
+                    logger.info(f"🔑 {cookie_name}: {cookie_value[:20]}...")
+                    logger.debug(f"🔑 Found {cookie_name}: {cookie_value[:20]}...")
                 else:
-                    print(f"⚠️ {cookie_name}: Not found")
+                    logger.warning(f"⚠️ {cookie_name}: Not found")
+                    logger.warning(f"⚠️ {cookie_name}: Not found")
             
             return True
             
         except Exception as e:
-            print(f"❌ Login error: {e}")
+            logger.error(f"❌ Login error: {e}", exc_info=True)
             return False
             
         finally:
             if driver:
+                logger.debug("🛑 Closing browser driver")
                 driver.quit()
 
     def mark_attendance(self, action="Signin"):
@@ -479,8 +523,9 @@ class GreytHRAttendanceAPI:
         Mark attendance using the API endpoint
         action can be "Signin" or "Signout"
         """
-        print(f"\n🎯 MARKING ATTENDANCE: {action.upper()}")
-        print("=" * 50)
+        logger.info(f"🎯 MARKING ATTENDANCE: {action.upper()}")
+        logger.info("=" * 50)
+        logger.info(f"🎯 Starting attendance API call: {action.upper()}")
         
         # Prepare API request
         url = f"{self.attendance_api}?action={action}"
@@ -488,10 +533,13 @@ class GreytHRAttendanceAPI:
         # Empty JSON payload as shown in your curl
         payload = {}
         
-        print(f"📤 API Request:")
-        print(f"   URL: {url}")
-        print(f"   Method: POST")
-        print(f"   Payload: {json.dumps(payload)}")
+        logger.info(f"📤 API Request:")
+        logger.info(f"   URL: {url}")
+        logger.info(f"   Method: POST")
+        logger.info(f"   Payload: {json.dumps(payload)}")
+        
+        logger.info(f"📤 API Request: POST {url}")
+        logger.debug(f"📤 Request payload: {json.dumps(payload)}")
         
         try:
             # Make the API request
@@ -501,43 +549,52 @@ class GreytHRAttendanceAPI:
                 timeout=30
             )
             
-            print(f"📥 Response:")
-            print(f"   Status Code: {response.status_code}")
-            print(f"   Headers: {dict(response.headers)}")
+            logger.info(f"📥 Response:")
+            logger.info(f"   Status Code: {response.status_code}")
+            logger.debug(f"   Headers: {dict(response.headers)}")
+            
+            logger.info(f"📥 API Response: Status {response.status_code}")
+            logger.debug(f"📥 Response headers: {dict(response.headers)}")
             
             # Try to parse response as JSON
             try:
                 response_data = response.json()
-                print(f"   JSON Response: {json.dumps(response_data, indent=2)}")
+                logger.info(f"   JSON Response: {json.dumps(response_data, indent=2)}")
+                logger.debug(f"📥 JSON Response: {json.dumps(response_data, indent=2)}")
             except:
-                print(f"   Text Response: {response.text}")
+                logger.info(f"   Text Response: {response.text}")
+                logger.debug(f"📥 Text Response: {response.text}")
             
             if response.status_code == 200:
-                print(f"✅ {action} SUCCESSFUL!")
+                logger.info(f"✅ {action} SUCCESSFUL!")
+                logger.info(f"✅ {action} API call successful!")
                 return True
             else:
-                print(f"❌ {action} FAILED! Status: {response.status_code}")
+                logger.error(f"❌ {action} FAILED! Status: {response.status_code}")
+                logger.error(f"❌ {action} API call failed! Status: {response.status_code}")
                 return False
                 
         except Exception as e:
-            print(f"❌ API request error: {e}")
+            logger.error(f"❌ API request error: {e}")
+            logger.error(f"❌ API request error: {e}", exc_info=True)
             return False
 
     def run_full_automation(self, username, password, action="Signin"):
         """
         Complete flow: Login -> Mark Attendance via API
         """
-        print("🚀 GreytHR API Attendance Automation")
-        print("=" * 50)
+        logger.info("🚀 GreytHR API Attendance Automation")
+        logger.info("=" * 50)
+        logger.info(f"🚀 Starting full automation: {action} for user {username}")
         
         # Step 1: Login and get cookies
         login_success = self.login_and_get_cookies(username, password)
         
         if not login_success:
-            print("❌ Login failed! Cannot proceed with attendance marking.")
+            logger.error("❌ Login failed! Cannot proceed with attendance marking.")
             return False
         
-        print(f"\n⏳ Waiting 3 seconds before API call...")
+        logger.info("⏳ Waiting 3 seconds before API call...")
         time.sleep(3)
         
         # Step 2: Mark attendance via API
@@ -724,20 +781,27 @@ class GreytHRScheduler:
 
 def main():
     if not SELENIUM_AVAILABLE:
+        logger.error("❌ Selenium not installed! Run: pip install selenium webdriver-manager")
         return
     
     # Check if test mode is enabled for display
     test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
     
+    # Log startup
+    logger.info("=" * 50)
+    logger.info("🎯 GreytHR Attendance Automation Started")
+    logger.info(f"🧪 Test Mode: {'ENABLED' if test_mode else 'DISABLED'}")
+    logger.info(f"📅 Current Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
+    logger.info("=" * 50)
+    
     if test_mode:
-        print("🧪 GreytHR API Attendance Automation - TEST MODE")
-        print("=" * 50)
-        print("⚠️  TEST MODE ENABLED - Will run on weekends!")
+        logger.info("🧪 GreytHR API Attendance Automation - TEST MODE")
+        logger.info("=" * 50)
+        logger.info("⚠️  TEST MODE ENABLED - Will run on weekends!")
     else:
-        print("🎯 GreytHR API Attendance Automation")
-        print("=" * 40)
-    print("This uses the API endpoint you discovered!")
-    print()
+        logger.info("🎯 GreytHR API Attendance Automation")
+        logger.info("=" * 40)
+    logger.info("This uses the API endpoint you discovered!")
     
     # Get credentials from environment variables
     url = os.getenv('GREYTHR_URL')
@@ -745,28 +809,28 @@ def main():
     password = os.getenv('GREYTHR_PASSWORD')
     
     if not url or not username or not password:
-        print("❌ Credentials not found in environment!")
-        print("Please create a .env file with:")
-        print("GREYTHR_URL=https://company.greythr.com")
-        print("GREYTHR_USERNAME=your_username")
-        print("GREYTHR_PASSWORD=your_password")
-        print("SIGNIN_TIME=09:00")
-        print("SIGNOUT_TIME=19:00")
-        print("TEST_MODE=true  # For testing on weekends")
-        print("MAX_RETRY_ATTEMPTS=5  # Max retry attempts per action")
-        print("BASE_RETRY_DELAY=300  # Base delay in seconds (5min)")
+        logger.error("❌ Credentials not found in environment!")
+        logger.info("Please create a .env file with:")
+        logger.info("GREYTHR_URL=https://company.greythr.com")
+        logger.info("GREYTHR_USERNAME=your_username")
+        logger.info("GREYTHR_PASSWORD=your_password")
+        logger.info("SIGNIN_TIME=09:00")
+        logger.info("SIGNOUT_TIME=19:00")
+        logger.info("TEST_MODE=true  # For testing on weekends")
+        logger.info("MAX_RETRY_ATTEMPTS=5  # Max retry attempts per action")
+        logger.info("BASE_RETRY_DELAY=300  # Base delay in seconds (5min)")
         return
     
     # Choose action
-    print("\nChoose mode:")
-    print("1. ✅ Manual Sign In")
-    print("2. ❌ Manual Sign Out") 
-    print("3. 🔄 Test Both (Sign In, wait, then Sign Out)")
-    print("4. 🕐 Background Daemon Mode (Auto Sign In/Out)")
-    print("5. 📊 View Today's Status")
-    print("6. ℹ️  View Schedule Configuration")
-    print("7. 🚨 Force Catch-up Check (Check for missed attendance)")
-    print("8. 🧪 Test Missed Window Logic (Debug)")
+    logger.info("\nChoose mode:")
+    logger.info("1. ✅ Manual Sign In")
+    logger.info("2. ❌ Manual Sign Out") 
+    logger.info("3. 🔄 Test Both (Sign In, wait, then Sign Out)")
+    logger.info("4. 🕐 Background Daemon Mode (Auto Sign In/Out)")
+    logger.info("5. 📊 View Today's Status")
+    logger.info("6. ℹ️  View Schedule Configuration")
+    logger.info("7. 🚨 Force Catch-up Check (Check for missed attendance)")
+    logger.info("8. 🧪 Test Missed Window Logic (Debug)")
     
     choice = input("Choose (1-8): ").strip()
     
@@ -776,33 +840,41 @@ def main():
     success = True  # Default success for non-immediate actions
     
     if choice == "1":
+        logger.info("👤 User selected: Manual Sign In")
         state_manager = AttendanceStateManager()
         try:
             success = greythr_api.run_full_automation(username, password, "Signin")
             if success:
                 state_manager.mark_signin_completed()
                 state_manager.clear_retry_schedule('signin')
+                logger.info("✅ Manual sign-in completed successfully")
             else:
                 state_manager.mark_signin_failed("Manual sign-in failed - unknown error")
+                logger.error("❌ Manual sign-in failed")
         except Exception as e:
             state_manager.mark_signin_failed(f"Manual sign-in error: {str(e)}")
+            logger.error(f"❌ Manual sign-in error: {e}")
             success = False
         
     elif choice == "2":
+        logger.info("👤 User selected: Manual Sign Out")
         state_manager = AttendanceStateManager()
         try:
             success = greythr_api.run_full_automation(username, password, "Signout")
             if success:
                 state_manager.mark_signout_completed()
                 state_manager.clear_retry_schedule('signout')
+                logger.info("✅ Manual sign-out completed successfully")
             else:
                 state_manager.mark_signout_failed("Manual sign-out failed - unknown error")
+                logger.error("❌ Manual sign-out failed")
         except Exception as e:
             state_manager.mark_signout_failed(f"Manual sign-out error: {str(e)}")
+            logger.error(f"❌ Manual sign-out error: {e}")
             success = False
         
     elif choice == "3":
-        print("\n🔄 Testing both actions...")
+        logger.info("🔄 Testing both actions...")
         state_manager = AttendanceStateManager()
         
         # Sign In
@@ -818,11 +890,11 @@ def main():
             signin_success = False
         
         if signin_success:
-            print("\n⏳ Waiting 30 seconds before sign out...")
+            logger.info("⏳ Waiting 30 seconds before sign out...")
             for i in range(30, 0, -1):
-                print(f"⏰ {i} seconds remaining...", end='\r')
+                logger.info(f"⏰ {i} seconds remaining...")
                 time.sleep(1)
-            print("\n")
+            logger.info("Proceeding to sign out...")
             
             # Sign Out (reuse the same session)
             try:
@@ -841,144 +913,160 @@ def main():
             success = False
             
     elif choice == "4":
-        print("\n🕐 Starting Background Daemon Mode...")
+        logger.info("🕐 Starting Background Daemon Mode...")
+        logger.info("🕐 Starting Background Daemon Mode...")
+        
         try:
             scheduler = GreytHRScheduler()
             scheduler_thread = scheduler.start_scheduler()
             
-            print("\n✅ Background scheduler started successfully!")
-            print("📋 The script will now run in the background and automatically:")
-            print(f"   • Sign in at {scheduler.signin_time} IST on weekdays")
-            print(f"   • Sign out at {scheduler.signout_time} IST on weekdays")
-            print("📄 Logs will be written to 'greythr_attendance.log'")
-            print("\n⚠️  Keep this script running! Press Ctrl+C to stop.")
+            logger.info("✅ Background scheduler started successfully!")
+            logger.info("📋 The script will now run in the background and automatically:")
+            logger.info(f"   • Sign in at {scheduler.signin_time} IST on weekdays")
+            logger.info(f"   • Sign out at {scheduler.signout_time} IST on weekdays")
+            logger.info(f"📄 All logs are being written to: logs/greythr_attendance_{datetime.now().strftime('%Y-%m-%d')}.log")
+            logger.info("⚠️  Keep this script running! Press Ctrl+C to stop.")
+            
+            # Log the same info
+            logger.info("✅ Background scheduler started successfully!")
+            logger.info(f"📋 Automatic sign-in at {scheduler.signin_time} IST, sign-out at {scheduler.signout_time} IST")
             
             try:
                 while True:
                     time.sleep(60)  # Keep main thread alive
             except KeyboardInterrupt:
-                print("\n👋 Background scheduler stopped.")
+                logger.info("👋 Background scheduler stopped.")
+                logger.info("👋 Background scheduler stopped by user")
                 
         except Exception as e:
-            print(f"❌ Failed to start scheduler: {e}")
+            logger.error(f"❌ Failed to start scheduler: {e}")
+            logger.error(f"❌ Failed to start scheduler: {e}")
             success = False
             
     elif choice == "5":
-        print("\n📊 Today's Attendance Status:")
-        print("=" * 50)
+        logger.info("📊 Today's Attendance Status:")
+        logger.info("=" * 50)
         state_manager = AttendanceStateManager()
         status = state_manager.get_status_summary()
         
-        print(f"📅 Date: {status['date']}")
-        print(f"🌅 Sign In: {status['signin_status']}")
+        logger.info(f"📅 Date: {status['date']}")
+        logger.info(f"🌅 Sign In: {status['signin_status']}")
         if status['signin_time']:
             signin_dt = datetime.fromisoformat(status['signin_time'])
-            print(f"    ✅ Completed at: {signin_dt.strftime('%I:%M %p IST')}")
+            logger.info(f"    ✅ Completed at: {signin_dt.strftime('%I:%M %p IST')}")
         
-        print(f"🌇 Sign Out: {status['signout_status']}")
+        logger.info(f"🌇 Sign Out: {status['signout_status']}")
         if status['signout_time']:
             signout_dt = datetime.fromisoformat(status['signout_time'])
-            print(f"    ✅ Completed at: {signout_dt.strftime('%I:%M %p IST')}")
+            logger.info(f"    ✅ Completed at: {signout_dt.strftime('%I:%M %p IST')}")
             
-        print(f"\n📈 Attempt Statistics:")
-        print(f"   Sign-in: {status['signin_attempts']} total, {status['signin_failed_attempts']} failed")
-        print(f"   Sign-out: {status['signout_attempts']} total, {status['signout_failed_attempts']} failed")
+        logger.info(f"📈 Attempt Statistics:")
+        logger.info(f"   Sign-in: {status['signin_attempts']} total, {status['signin_failed_attempts']} failed")
+        logger.info(f"   Sign-out: {status['signout_attempts']} total, {status['signout_failed_attempts']} failed")
         
         # Show retry information if applicable
         if status.get('signin_next_retry'):
             retry_time = datetime.fromisoformat(status['signin_next_retry'])
-            print(f"\n🔄 Sign-in Retry: Scheduled for {retry_time.strftime('%I:%M %p IST')}")
+            logger.info(f"🔄 Sign-in Retry: Scheduled for {retry_time.strftime('%I:%M %p IST')}")
             if status.get('signin_last_error'):
-                print(f"   Last Error: {status['signin_last_error']}")
+                logger.info(f"   Last Error: {status['signin_last_error']}")
                 
         if status.get('signout_next_retry'):
             retry_time = datetime.fromisoformat(status['signout_next_retry'])
-            print(f"\n🔄 Sign-out Retry: Scheduled for {retry_time.strftime('%I:%M %p IST')}")
+            logger.info(f"🔄 Sign-out Retry: Scheduled for {retry_time.strftime('%I:%M %p IST')}")
             if status.get('signout_last_error'):
-                print(f"   Last Error: {status['signout_last_error']}")
+                logger.info(f"   Last Error: {status['signout_last_error']}")
         
-        print("=" * 50)
+        logger.info("=" * 50)
         return  # Don't show success/failure message
         
     elif choice == "6":
-        print("\n📅 Current Schedule Configuration:")
-        print("=" * 50)
+        logger.info("📅 Current Schedule Configuration:")
+        logger.info("=" * 50)
         signin_time = os.getenv('SIGNIN_TIME', '09:00')
         signout_time = os.getenv('SIGNOUT_TIME', '19:00')
         test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
         max_retries = os.getenv('MAX_RETRY_ATTEMPTS', '5')
         base_delay = int(os.getenv('BASE_RETRY_DELAY', '300')) // 60
         
-        print(f"🌅 Sign In Time: {signin_time} IST")
-        print(f"🌇 Sign Out Time: {signout_time} IST")
+        logger.info(f"🌅 Sign In Time: {signin_time} IST")
+        logger.info(f"🌇 Sign Out Time: {signout_time} IST")
         if test_mode:
-            print("📅 Days: ALL DAYS (Mon-Sun) - 🧪 TEST MODE")
-            print("🧪 TEST MODE: ENABLED")
+            logger.info("📅 Days: ALL DAYS (Mon-Sun) - 🧪 TEST MODE")
+            logger.info("🧪 TEST MODE: ENABLED")
         else:
-            print("📅 Days: Monday to Friday")
-            print("🧪 TEST MODE: Disabled")
-        print("🕐 Timezone: Asia/Kolkata (IST)")
+            logger.info("📅 Days: Monday to Friday")
+            logger.info("🧪 TEST MODE: Disabled")
+        logger.info("🕐 Timezone: Asia/Kolkata (IST)")
         
-        print(f"\n🔄 Retry Configuration:")
-        print(f"   Max Attempts: {max_retries}")
-        print(f"   Base Delay: {base_delay} minutes")
-        print(f"   Retry Schedule: {base_delay}min → {base_delay*3}min → {base_delay*9}min → {base_delay*27}min → {base_delay*81}min")
+        logger.info(f"🔄 Retry Configuration:")
+        logger.info(f"   Max Attempts: {max_retries}")
+        logger.info(f"   Base Delay: {base_delay} minutes")
+        logger.info(f"   Retry Schedule: {base_delay}min → {base_delay*3}min → {base_delay*9}min → {base_delay*27}min → {base_delay*81}min")
         
-        print(f"\n📂 Storage:")
-        print("   Activities: ./activities/")
-        print("   Logs: ./logs/")
-        print("=" * 50)
+        logger.info(f"📂 Storage:")
+        logger.info("   Activities: ./activities/")
+        logger.info("   Logs: ./logs/")
+        logger.info("=" * 50)
         return  # Don't show success/failure message
         
     elif choice == "7":
-        print("\n🚨 Running Catch-up Check...")
+        logger.info("🚨 Running Catch-up Check...")
+        logger.info("👤 User selected: Force Catch-up Check")
         scheduler = GreytHRScheduler()
         scheduler.check_and_catchup()
-        print("✅ Catch-up check completed!")
+        logger.info("✅ Catch-up check completed!")
+        logger.info("✅ Manual catch-up check completed")
         return  # Don't show success/failure message
         
     elif choice == "8":
-        print("\n🧪 Testing Missed Window Logic...")
-        print("=" * 40)
+        logger.info("🧪 Testing Missed Window Logic...")
+        logger.info("=" * 40)
         state_manager = AttendanceStateManager()
         signin_time = os.getenv('SIGNIN_TIME', '09:00')
         signout_time = os.getenv('SIGNOUT_TIME', '19:00')
         
         current_time = datetime.now(pytz.timezone('Asia/Kolkata'))
-        print(f"⏰ Current Time: {current_time.strftime('%H:%M')}")
-        print(f"📅 Sign-in Time: {signin_time}")
-        print(f"📅 Sign-out Time: {signout_time}")
-        print()
+        logger.info(f"⏰ Current Time: {current_time.strftime('%H:%M')}")
+        logger.info(f"📅 Sign-in Time: {signin_time}")
+        logger.info(f"📅 Sign-out Time: {signout_time}")
+        logger.info("")
         
         # Test sign-in logic
         should_signin = state_manager.should_signin_now(signin_time, signout_time)
-        print(f"🔍 Should Sign-in Now: {'✅ YES' if should_signin else '❌ NO'}")
+        logger.info(f"🔍 Should Sign-in Now: {'✅ YES' if should_signin else '❌ NO'}")
         
         # Test sign-out logic  
         should_signout = state_manager.should_signout_now(signout_time)
-        print(f"🔍 Should Sign-out Now: {'✅ YES' if should_signout else '❌ NO'}")
+        logger.info(f"🔍 Should Sign-out Now: {'✅ YES' if should_signout else '❌ NO'}")
         
-        print("\n📊 Current Status:")
+        logger.info("📊 Current Status:")
         signin_completed = state_manager.is_signin_completed()
         signout_completed = state_manager.is_signout_completed()
-        print(f"   Sign-in Completed: {'✅ YES' if signin_completed else '❌ NO'}")
-        print(f"   Sign-out Completed: {'✅ YES' if signout_completed else '❌ NO'}")
+        logger.info(f"   Sign-in Completed: {'✅ YES' if signin_completed else '❌ NO'}")
+        logger.info(f"   Sign-out Completed: {'✅ YES' if signout_completed else '❌ NO'}")
         
-        print("=" * 40)
+        logger.info("=" * 40)
         return  # Don't show success/failure message
         
     else:
-        print("❌ Invalid choice!")
+        logger.error("❌ Invalid choice!")
         return
     
     # Only show success/failure for immediate actions
     if choice in ["1", "2", "3"]:
-        print("\n" + "=" * 50)
+        logger.info("=" * 50)
         if success:
-            print("🎉 AUTOMATION COMPLETED SUCCESSFULLY!")
+            logger.info("🎉 AUTOMATION COMPLETED SUCCESSFULLY!")
+            logger.info("🎉 Automation completed successfully")
         else:
-            print("❌ AUTOMATION FAILED!")
-        print("=" * 50)
+            logger.error("❌ AUTOMATION FAILED!")
+            logger.info("❌ Automation failed")
+        logger.info("=" * 50)
+    
+    # Log script exit (except for daemon mode)
+    if choice != "4":
+        logger.info("👋 Script execution completed")
 
 if __name__ == "__main__":
     main()
