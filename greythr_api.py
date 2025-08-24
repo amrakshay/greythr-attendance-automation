@@ -18,6 +18,8 @@ import pytz
 from pathlib import Path
 import random
 import yaml
+import platform
+import psutil
 
 # Selenium imports
 try:
@@ -362,6 +364,289 @@ class AttendanceStateManager:
             'signin_next_retry': state.get('signin_next_retry'),
             'signout_next_retry': state.get('signout_next_retry')
         }
+
+
+class StateTracker:
+    """Tracks current script state for dashboard and monitoring"""
+    
+    def __init__(self):
+        self.state_dir = Path('state')
+        self.state_dir.mkdir(exist_ok=True)
+        self.state_file = self.state_dir / 'current_state.json'
+        self.script_start_time = datetime.now(pytz.timezone('Asia/Kolkata'))
+        self.logger = logging.getLogger('greythr_automation.state_tracker')
+        
+        # Initialize state
+        self._initialize_state()
+    
+    def _initialize_state(self):
+        """Initialize the state file with basic information"""
+        try:
+            initial_state = {
+                'script': {
+                    'status': 'starting',
+                    'start_time': self.script_start_time.isoformat(),
+                    'pid': os.getpid(),
+                    'python_version': platform.python_version(),
+                    'platform': platform.system(),
+                    'hostname': platform.node(),
+                    'working_directory': str(Path.cwd()),
+                },
+                'current_operation': {
+                    'action': 'initializing',
+                    'details': 'Script is starting up',
+                    'start_time': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat(),
+                    'progress': 0
+                },
+                'configuration': {
+                    'signin_time': os.getenv('SIGNIN_TIME', '09:00'),
+                    'signout_time': os.getenv('SIGNOUT_TIME', '19:00'),
+                    'test_mode': os.getenv('TEST_MODE', 'false').lower() == 'true',
+                    'timezone': 'Asia/Kolkata',
+                    'max_retry_attempts': int(os.getenv('MAX_RETRY_ATTEMPTS', '5')),
+                    'base_retry_delay_minutes': int(os.getenv('BASE_RETRY_DELAY', '300')) // 60
+                },
+                'schedule': {
+                    'next_signin': None,
+                    'next_signout': None,
+                    'daemon_running': False,
+                    'scheduler_active': False
+                },
+                'today_summary': {},
+                'statistics': {
+                    'total_operations': 0,
+                    'successful_operations': 0,
+                    'failed_operations': 0,
+                    'signin_attempts': 0,
+                    'signout_attempts': 0,
+                    'last_successful_signin': None,
+                    'last_successful_signout': None,
+                    'uptime_seconds': 0
+                },
+                'system': {
+                    'memory_usage_mb': 0,
+                    'cpu_percent': 0,
+                    'disk_usage_percent': 0
+                },
+                'errors': {
+                    'last_error': None,
+                    'last_error_time': None,
+                    'retry_info': {}
+                },
+                'last_updated': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+            }
+            
+            self._save_state(initial_state)
+            self.logger.debug(f"State tracker initialized - state file: {self.state_file}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize state tracker: {e}")
+    
+    def _save_state(self, state):
+        """Save state to JSON file"""
+        try:
+            with open(self.state_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.logger.error(f"Failed to save state: {e}")
+    
+    def _load_state(self):
+        """Load current state from file"""
+        try:
+            if self.state_file.exists():
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            self.logger.error(f"Failed to load state: {e}")
+            return {}
+    
+    def _update_system_info(self, state):
+        """Update system information in state"""
+        try:
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            
+            state['system'] = {
+                'memory_usage_mb': round(memory_info.rss / 1024 / 1024, 2),
+                'cpu_percent': round(process.cpu_percent(), 2),
+                'disk_usage_percent': round(psutil.disk_usage('.').percent, 2)
+            }
+            
+            # Update uptime
+            current_time = datetime.now(pytz.timezone('Asia/Kolkata'))
+            uptime = (current_time - self.script_start_time).total_seconds()
+            state['statistics']['uptime_seconds'] = round(uptime)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update system info: {e}")
+    
+    def update_status(self, status, details=None):
+        """Update script status"""
+        try:
+            state = self._load_state()
+            state['script']['status'] = status
+            if details:
+                state['script']['details'] = details
+            
+            self._update_system_info(state)
+            state['last_updated'] = datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+            
+            self._save_state(state)
+            self.logger.debug(f"Status updated: {status}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update status: {e}")
+    
+    def start_operation(self, action, details=None):
+        """Start a new operation"""
+        try:
+            state = self._load_state()
+            state['current_operation'] = {
+                'action': action,
+                'details': details or f"Performing {action}",
+                'start_time': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat(),
+                'progress': 0
+            }
+            state['script']['status'] = 'active'
+            
+            self._update_system_info(state)
+            state['last_updated'] = datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+            
+            self._save_state(state)
+            self.logger.debug(f"Started operation: {action}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to start operation: {e}")
+    
+    def update_operation_progress(self, progress, details=None):
+        """Update current operation progress"""
+        try:
+            state = self._load_state()
+            if 'current_operation' in state:
+                state['current_operation']['progress'] = progress
+                if details:
+                    state['current_operation']['details'] = details
+                
+                self._update_system_info(state)
+                state['last_updated'] = datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+                
+                self._save_state(state)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update operation progress: {e}")
+    
+    def complete_operation(self, success=True, result=None):
+        """Complete current operation"""
+        try:
+            state = self._load_state()
+            
+            # Update statistics
+            state['statistics']['total_operations'] += 1
+            if success:
+                state['statistics']['successful_operations'] += 1
+            else:
+                state['statistics']['failed_operations'] += 1
+            
+            # Mark operation as complete
+            if 'current_operation' in state:
+                action = state['current_operation'].get('action', 'unknown')
+                state['current_operation'] = {
+                    'action': 'idle',
+                    'details': 'Waiting for next operation',
+                    'last_completed': {
+                        'action': action,
+                        'success': success,
+                        'result': result,
+                        'completed_at': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+                    }
+                }
+            
+            state['script']['status'] = 'idle'
+            
+            self._update_system_info(state)
+            state['last_updated'] = datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+            
+            self._save_state(state)
+            self.logger.debug(f"Operation completed: success={success}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to complete operation: {e}")
+    
+    def update_schedule_info(self, next_signin=None, next_signout=None, daemon_running=False):
+        """Update schedule information"""
+        try:
+            state = self._load_state()
+            state['schedule'] = {
+                'next_signin': next_signin.isoformat() if next_signin else None,
+                'next_signout': next_signout.isoformat() if next_signout else None,
+                'daemon_running': daemon_running,
+                'scheduler_active': daemon_running
+            }
+            
+            self._update_system_info(state)
+            state['last_updated'] = datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+            
+            self._save_state(state)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update schedule info: {e}")
+    
+    def update_today_summary(self):
+        """Update today's attendance summary"""
+        try:
+            state_manager = AttendanceStateManager()
+            summary = state_manager.get_status_summary()
+            
+            state = self._load_state()
+            state['today_summary'] = summary
+            
+            # Update specific statistics
+            state['statistics']['signin_attempts'] = summary.get('signin_attempts', 0)
+            state['statistics']['signout_attempts'] = summary.get('signout_attempts', 0)
+            
+            if summary.get('signin_time'):
+                state['statistics']['last_successful_signin'] = summary['signin_time']
+            if summary.get('signout_time'):
+                state['statistics']['last_successful_signout'] = summary['signout_time']
+            
+            self._update_system_info(state)
+            state['last_updated'] = datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+            
+            self._save_state(state)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update today summary: {e}")
+    
+    def log_error(self, error_msg, retry_info=None):
+        """Log an error to state"""
+        try:
+            state = self._load_state()
+            state['errors'] = {
+                'last_error': str(error_msg),
+                'last_error_time': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat(),
+                'retry_info': retry_info or {}
+            }
+            state['script']['status'] = 'error'
+            
+            self._update_system_info(state)
+            state['last_updated'] = datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+            
+            self._save_state(state)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to log error to state: {e}")
+    
+    def get_current_state(self):
+        """Get current state as dictionary"""
+        try:
+            state = self._load_state()
+            self._update_system_info(state)
+            return state
+        except Exception as e:
+            self.logger.error(f"Failed to get current state: {e}")
+            return {}
+
 
 class GreytHRAttendanceAPI:
     def __init__(self):
@@ -794,6 +1079,10 @@ def main():
     logger.info(f"📅 Current Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
     logger.info("=" * 50)
     
+    # Initialize state tracker for dashboard monitoring
+    state_tracker = StateTracker()
+    state_tracker.update_status('starting', 'Initializing GreytHR automation script')
+    
     if test_mode:
         logger.info("🧪 GreytHR API Attendance Automation - TEST MODE")
         logger.info("=" * 50)
@@ -831,8 +1120,9 @@ def main():
     logger.info("6. ℹ️  View Schedule Configuration")
     logger.info("7. 🚨 Force Catch-up Check (Check for missed attendance)")
     logger.info("8. 🧪 Test Missed Window Logic (Debug)")
+    logger.info("9. 📊 View Current Script State (Dashboard Data)")
     
-    choice = input("Choose (1-8): ").strip()
+    choice = input("Choose (1-9): ").strip()
     
     # Create API automation instance
     greythr_api = GreytHRAttendanceAPI()
@@ -841,6 +1131,7 @@ def main():
     
     if choice == "1":
         logger.info("👤 User selected: Manual Sign In")
+        state_tracker.start_operation("manual_signin", "User initiated manual sign-in")
         state_manager = AttendanceStateManager()
         try:
             success = greythr_api.run_full_automation(username, password, "Signin")
@@ -848,16 +1139,21 @@ def main():
                 state_manager.mark_signin_completed()
                 state_manager.clear_retry_schedule('signin')
                 logger.info("✅ Manual sign-in completed successfully")
+                state_tracker.complete_operation(success=True, result="Manual sign-in successful")
             else:
                 state_manager.mark_signin_failed("Manual sign-in failed - unknown error")
                 logger.error("❌ Manual sign-in failed")
+                state_tracker.complete_operation(success=False, result="Manual sign-in failed")
         except Exception as e:
             state_manager.mark_signin_failed(f"Manual sign-in error: {str(e)}")
             logger.error(f"❌ Manual sign-in error: {e}")
             success = False
+            state_tracker.log_error(f"Manual sign-in error: {str(e)}")
+            state_tracker.complete_operation(success=False, result="Manual sign-in error")
         
     elif choice == "2":
         logger.info("👤 User selected: Manual Sign Out")
+        state_tracker.start_operation("manual_signout", "User initiated manual sign-out")
         state_manager = AttendanceStateManager()
         try:
             success = greythr_api.run_full_automation(username, password, "Signout")
@@ -865,16 +1161,21 @@ def main():
                 state_manager.mark_signout_completed()
                 state_manager.clear_retry_schedule('signout')
                 logger.info("✅ Manual sign-out completed successfully")
+                state_tracker.complete_operation(success=True, result="Manual sign-out successful")
             else:
                 state_manager.mark_signout_failed("Manual sign-out failed - unknown error")
                 logger.error("❌ Manual sign-out failed")
+                state_tracker.complete_operation(success=False, result="Manual sign-out failed")
         except Exception as e:
             state_manager.mark_signout_failed(f"Manual sign-out error: {str(e)}")
             logger.error(f"❌ Manual sign-out error: {e}")
             success = False
+            state_tracker.log_error(f"Manual sign-out error: {str(e)}")
+            state_tracker.complete_operation(success=False, result="Manual sign-out error")
         
     elif choice == "3":
         logger.info("🔄 Testing both actions...")
+        state_tracker.start_operation("test_both", "Testing both sign-in and sign-out")
         state_manager = AttendanceStateManager()
         
         # Sign In
@@ -891,10 +1192,14 @@ def main():
         
         if signin_success:
             logger.info("⏳ Waiting 30 seconds before sign out...")
+            state_tracker.update_operation_progress(50, "Sign-in completed, waiting 30 seconds before sign-out")
             for i in range(30, 0, -1):
                 logger.info(f"⏰ {i} seconds remaining...")
+                progress = 50 + ((30 - i) / 30) * 25  # Progress from 50% to 75%
+                state_tracker.update_operation_progress(progress, f"Waiting {i} seconds before sign-out")
                 time.sleep(1)
             logger.info("Proceeding to sign out...")
+            state_tracker.update_operation_progress(75, "Starting sign-out process")
             
             # Sign Out (reuse the same session)
             try:
@@ -911,14 +1216,22 @@ def main():
             success = signin_success and signout_success
         else:
             success = False
+        
+        # Complete the test both operation
+        if success:
+            state_tracker.complete_operation(success=True, result="Both sign-in and sign-out completed successfully")
+        else:
+            state_tracker.complete_operation(success=False, result="Test both operation failed")
             
     elif choice == "4":
         logger.info("🕐 Starting Background Daemon Mode...")
         logger.info("🕐 Starting Background Daemon Mode...")
+        state_tracker.start_operation("daemon_mode", "Starting background daemon mode")
         
         try:
             scheduler = GreytHRScheduler()
             scheduler_thread = scheduler.start_scheduler()
+            state_tracker.update_schedule_info(daemon_running=True)
             
             logger.info("✅ Background scheduler started successfully!")
             logger.info("📋 The script will now run in the background and automatically:")
@@ -1049,6 +1362,76 @@ def main():
         logger.info("=" * 40)
         return  # Don't show success/failure message
         
+    elif choice == "9":
+        logger.info("📊 Current Script State (Dashboard Data):")
+        logger.info("=" * 50)
+        
+        # Update today's summary first
+        state_tracker.update_today_summary()
+        current_state = state_tracker.get_current_state()
+        
+        # Display formatted state information
+        logger.info(f"🖥️  Script Information:")
+        script_info = current_state.get('script', {})
+        logger.info(f"   Status: {script_info.get('status', 'unknown')}")
+        logger.info(f"   Start Time: {script_info.get('start_time', 'unknown')}")
+        logger.info(f"   PID: {script_info.get('pid', 'unknown')}")
+        logger.info(f"   Platform: {script_info.get('platform', 'unknown')}")
+        
+        logger.info(f"\n🔄 Current Operation:")
+        operation = current_state.get('current_operation', {})
+        logger.info(f"   Action: {operation.get('action', 'unknown')}")
+        logger.info(f"   Details: {operation.get('details', 'N/A')}")
+        logger.info(f"   Progress: {operation.get('progress', 0)}%")
+        
+        logger.info(f"\n⚙️  Configuration:")
+        config = current_state.get('configuration', {})
+        logger.info(f"   Sign-in Time: {config.get('signin_time', 'N/A')} IST")
+        logger.info(f"   Sign-out Time: {config.get('signout_time', 'N/A')} IST")
+        logger.info(f"   Test Mode: {'ENABLED' if config.get('test_mode') else 'DISABLED'}")
+        logger.info(f"   Max Retry Attempts: {config.get('max_retry_attempts', 'N/A')}")
+        
+        logger.info(f"\n⏰ Schedule:")
+        schedule_info = current_state.get('schedule', {})
+        next_signin = schedule_info.get('next_signin')
+        next_signout = schedule_info.get('next_signout')
+        logger.info(f"   Next Sign-in: {next_signin if next_signin else 'Not scheduled'}")
+        logger.info(f"   Next Sign-out: {next_signout if next_signout else 'Not scheduled'}")
+        logger.info(f"   Daemon Running: {'✅ YES' if schedule_info.get('daemon_running') else '❌ NO'}")
+        
+        logger.info(f"\n📈 Statistics:")
+        stats = current_state.get('statistics', {})
+        logger.info(f"   Total Operations: {stats.get('total_operations', 0)}")
+        logger.info(f"   Successful: {stats.get('successful_operations', 0)}")
+        logger.info(f"   Failed: {stats.get('failed_operations', 0)}")
+        logger.info(f"   Uptime: {stats.get('uptime_seconds', 0)} seconds")
+        
+        logger.info(f"\n🖥️  System Resources:")
+        system = current_state.get('system', {})
+        logger.info(f"   Memory Usage: {system.get('memory_usage_mb', 0)} MB")
+        logger.info(f"   CPU Usage: {system.get('cpu_percent', 0)}%")
+        logger.info(f"   Disk Usage: {system.get('disk_usage_percent', 0)}%")
+        
+        logger.info(f"\n📅 Today's Summary:")
+        today_summary = current_state.get('today_summary', {})
+        if today_summary:
+            logger.info(f"   Date: {today_summary.get('date', 'N/A')}")
+            logger.info(f"   Sign-in Status: {today_summary.get('signin_status', 'N/A')}")
+            logger.info(f"   Sign-out Status: {today_summary.get('signout_status', 'N/A')}")
+            logger.info(f"   Total Attempts: {today_summary.get('signin_attempts', 0)} + {today_summary.get('signout_attempts', 0)}")
+        
+        errors = current_state.get('errors', {})
+        if errors.get('last_error'):
+            logger.info(f"\n❌ Last Error:")
+            logger.info(f"   Error: {errors.get('last_error', 'N/A')}")
+            logger.info(f"   Time: {errors.get('last_error_time', 'N/A')}")
+        
+        logger.info("=" * 50)
+        logger.info("💾 State file location: state/current_state.json")
+        logger.info("📊 This data is perfect for building dashboards!")
+        logger.info("=" * 50)
+        return  # Don't show success/failure message
+        
     else:
         logger.error("❌ Invalid choice!")
         return
@@ -1066,6 +1449,7 @@ def main():
     
     # Log script exit (except for daemon mode)
     if choice != "4":
+        state_tracker.update_status('idle', 'Script completed, waiting for next user action')
         logger.info("👋 Script execution completed")
 
 if __name__ == "__main__":
